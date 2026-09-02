@@ -1,0 +1,10 @@
+{
+  "name": "DigitalNexCare",
+  "description": "Smarter Care. Stronger Connections. South Africa\u0027s healthcare practitioner discovery, scheduling and marketplace platform.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,17 @@
+User-agent: *
+Allow: /
+Allow: /search
+Allow: /specialties/
+Allow: /locations/
+Allow: /doctors/
+Allow: /b/
+Allow: /pricing
+Allow: /partner/
+
+Disallow: /admin/
+Disallow: /provider/dashboard
+Disallow: /patient/dashboard
+Disallow: /patient/intake
+Disallow: /api/
+
+Sitemap: https://digitalnexcare.co.za/sitemap.xml
