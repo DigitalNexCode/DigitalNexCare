@@ -1,23 +1,28 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ProviderCard } from '../../components/provider/ProviderCard';
 import { UnlockedExternalCard } from '../../components/external-practitioner/UnlockedExternalCard';
 import { LockedExternalCard } from '../../components/external-practitioner/LockedExternalCard';
-import { MOCK_PROVIDERS, MOCK_UNLOCKED_EXTERNAL, MOCK_LOCKED_EXTERNAL } from '../../data/mockDatabase';
+import { SubscriptionService } from '../../lib/subscription/subscription-service';
 import { Button } from '../../components/ui/Button';
 import { useAuth } from '../../lib/auth/context';
-import { calculateDistanceKm } from '../../lib/subscription/subscription-service';
-import { LocateFixed, MapPin, Navigation, ShieldCheck, AlertCircle, Sparkles } from 'lucide-react';
+import { LocateFixed, MapPin, Database, RefreshCw, ShieldCheck, AlertCircle } from 'lucide-react';
+import { DigitalNexCareProvider, ExternalPractitionerLocked, ExternalPractitionerUnlocked } from '../../types';
 
 export const NearMePage: React.FC = () => {
   const { unlockedIds } = useAuth();
   const [coordinates, setCoordinates] = useState<{ lat: number; lng: number } | null>(null);
   const [status, setStatus] = useState<'IDLE' | 'LOCATING' | 'GRANTED' | 'DENIED'>('IDLE');
-  const [radiusKm, setRadiusKm] = useState(15);
+  const [radiusKm, setRadiusKm] = useState(25);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const [nearbyProviders, setNearbyProviders] = useState<(DigitalNexCareProvider & { distanceKm?: number })[]>([]);
+  const [nearbyUnlocked, setNearbyUnlocked] = useState<(ExternalPractitionerUnlocked & { distanceKm?: number })[]>([]);
+  const [nearbyLocked, setNearbyLocked] = useState<(ExternalPractitionerLocked & { distanceKm?: number })[]>([]);
 
   const requestLocation = () => {
     if (!navigator.geolocation) {
       setStatus('DENIED');
-      // Fallback coordinate in Pretoria East
+      // Fallback coordinate in Pretoria East / Hatfield
       setCoordinates({ lat: -25.7545, lng: 28.2314 });
       return;
     }
@@ -39,36 +44,47 @@ export const NearMePage: React.FC = () => {
     requestLocation();
   }, []);
 
-  const nearbyProviders = useMemo(() => {
+  useEffect(() => {
     const lat = coordinates?.lat || -25.7545;
     const lng = coordinates?.lng || 28.2314;
 
-    return MOCK_PROVIDERS.map((p) => {
-      const dist = p.coordinates
-        ? calculateDistanceKm(lat, lng, p.coordinates.latitude, p.coordinates.longitude)
-        : 3.8;
-      return { ...p, calculatedDistance: dist };
-    }).filter((p) => p.calculatedDistance <= radiusKm);
-  }, [coordinates, radiusKm]);
+    // 1. Synchronous cache check
+    const syncRes = SubscriptionService.searchDirectory({
+      userLocation: { lat, lng },
+      radiusKm,
+      unlockedIds,
+    });
+    setNearbyProviders(syncRes.verifiedProviders);
+    setNearbyUnlocked(syncRes.unlockedExternal);
+    setNearbyLocked(syncRes.lockedExternal);
 
-  const nearbyUnlocked = useMemo(() => {
-    const lat = coordinates?.lat || -25.7545;
-    const lng = coordinates?.lng || 28.2314;
+    // 2. Asynchronous live PostGIS query
+    let isCancelled = false;
+    setIsLoading(true);
 
-    return MOCK_UNLOCKED_EXTERNAL.filter((p) => unlockedIds.includes(p.id)).map((p) => {
-      const dist = p.coordinates
-        ? calculateDistanceKm(lat, lng, p.coordinates.latitude, p.coordinates.longitude)
-        : 4.5;
-      return { ...p, calculatedDistance: dist };
-    }).filter((p) => p.calculatedDistance <= radiusKm);
+    SubscriptionService.searchDirectoryAsync({
+      userLocation: { lat, lng },
+      radiusKm,
+      unlockedIds,
+    })
+      .then((asyncRes) => {
+        if (!isCancelled && asyncRes) {
+          setNearbyProviders(asyncRes.verifiedProviders);
+          setNearbyUnlocked(asyncRes.unlockedExternal);
+          setNearbyLocked(asyncRes.lockedExternal);
+        }
+      })
+      .catch((err) => {
+        console.debug('Error in near-me async query:', err);
+      })
+      .finally(() => {
+        if (!isCancelled) setIsLoading(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
   }, [coordinates, radiusKm, unlockedIds]);
-
-  const nearbyLocked = useMemo(() => {
-    return MOCK_LOCKED_EXTERNAL.filter((p) => !unlockedIds.includes(p.id)).map((p) => {
-      const dist = p.approximateDistanceKm || 5.2;
-      return { ...p, calculatedDistance: dist };
-    }).filter((p) => p.calculatedDistance <= radiusKm);
-  }, [radiusKm, unlockedIds]);
 
   return (
     <div className="min-h-screen bg-slate-50 py-10">
@@ -150,11 +166,16 @@ export const NearMePage: React.FC = () => {
             <h2 className="text-lg font-bold text-slate-900">
               Closest Verified Providers & Healthcare Practices ({nearbyProviders.length + nearbyUnlocked.length + nearbyLocked.length} matches within {radiusKm} km)
             </h2>
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-xl">
+              <Database className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Supabase PostGIS Spatial Index</span>
+              {isLoading && <RefreshCw className="w-3 h-3 text-[#176BFF] animate-spin ml-1" />}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {nearbyProviders.map((p) => (
-              <ProviderCard key={p.id} provider={p} userDistanceKm={p.calculatedDistance} />
+              <ProviderCard key={p.id} provider={p} userDistanceKm={p.distanceKm} />
             ))}
             {nearbyUnlocked.map((p) => (
               <UnlockedExternalCard key={p.id} practitioner={p} />
@@ -163,7 +184,7 @@ export const NearMePage: React.FC = () => {
               <LockedExternalCard
                 key={p.id}
                 practitioner={p}
-                userDistanceKm={p.calculatedDistance}
+                userDistanceKm={p.distanceKm}
               />
             ))}
           </div>

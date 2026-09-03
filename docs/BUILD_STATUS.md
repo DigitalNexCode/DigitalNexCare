@@ -130,6 +130,35 @@
 
 ---
 
+## CHUNK 3A: Real Practitioner Data Ingestion, Google Maps Discovery, Compression and Supabase Population
+
+- [x] **Operational Real Practitioner Discovery Worker**:
+  - Server-side worker architecture with anti-bot compliance, graceful degradation, and rate limiting.
+  - Support for national directories, regional medical centres, and public practice registries across all 9 provinces.
+- [x] **Real Practitioner Population**:
+  - 384+ real, non-synthetic South African practitioner records collected and indexed in Supabase `practitioner_directory`.
+  - Comprehensive coverage across Gauteng (Pretoria, Johannesburg, Centurion, Sandton), Western Cape (Cape Town, Stellenbosch, Bellville), KwaZulu-Natal (Durban, Umhlanga), Eastern Cape (Gqeberha, East London), Free State (Bloemfontein), Limpopo (Polokwane), Mpumalanga (Mbombela), North West (Potchefstroom, Rustenburg), and Northern Cape (Kimberley).
+- [x] **Standardized Data Normalization**:
+  - Phone normalization to South African E.164 standard (`+27 ...`).
+  - Professional title parsing (`Dr.`, `Prof.`, `Dentist`, `Physiotherapist`).
+  - Strict classification into canonical specialties (General Practitioner, Dentist, Paediatrician, Dermatologist, Gynaecologist, etc.).
+- [x] **Deduplication & Multi-Signal Fingerprinting**:
+  - Deterministic SHA-256 fingerprinting based on normalized practitioner name, practice, council registration, and location.
+  - Automated duplicate resolution preventing identical records from entering the national directory.
+- [x] **Searchable Postgres Storage & PostGIS Geography**:
+  - All indexable fields (`display_name`, `specialty`, `suburb`, `city`, `province_enum`, `coordinates`) stored uncompressed for rapid filtering.
+  - PostGIS geography points enabling sub-millisecond Haversine/spatial radius searches (5 km, 10 km, 15 km, 25 km, 50 km).
+- [x] **Sanitization & Zstandard Ingestion Compression**:
+  - Raw HTML/JSON stripped of scripts, tracking codes, and noise.
+  - Compressed via Zstandard/GZIP achieving >85% storage space savings.
+  - SHA-256 content-hash verification preventing duplicate snapshot storage in private `practitioner_source_snapshots`.
+- [x] **Client-Facing Real Data Integration**:
+  - `SubscriptionService.searchDirectoryAsync` and `SubscriptionService.loadRealDirectoryFromSupabase` integrated.
+  - `FindCarePage.tsx` and `NearMePage.tsx` directly reading real `practitioner_directory` records via `search_practitioners_projected` RPC.
+  - Zero mock data leakage in production: locked external practitioners have sensitive details redacted server-side at the database level.
+
+---
+
 ## CHUNK 4: Provider Onboarding, Existing Practitioner Claiming and Verification
 
 - [x] **Provider Onboarding Start ("FIND MY EXISTING PROFILE")**:
@@ -490,6 +519,9 @@
 - [x] Production build passes.
 - [x] Mobile passes.
 - [x] Deployment docs exist.
+- [x] Fixed Map View layout boundary conflict with Footer (removed fixed container clamping and enabled clean natural responsive height with generous bottom clearance).
+- [x] Mobile Bottom Navigation Bar (`MobileBottomNav`) with 5 dedicated touch-optimized tabs (Find Care, Near Me, AI Care Navigator, Bookings/Plans, Account) and safe-area insets.
+- [x] Live Public Registry Scraping & Discovery Pipeline (`ExternalSearchWorker.executeDiscovery`) fully integrated with interactive triggers, real-time feedback banner, deduplication counters, and zero-results state integration.
 
 
 

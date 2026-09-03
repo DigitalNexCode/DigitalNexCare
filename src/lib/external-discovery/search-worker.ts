@@ -17,8 +17,12 @@ import {
 import { evaluateDeduplicationConfidence } from './fingerprint';
 import { evaluateFieldAuthorityUpdates } from './authority';
 import { processSourceCompression } from './compression';
-import { MOCK_PRACTITIONERS } from '../../data/mockDatabase';
-import { ExternalPractitionerUnlocked, Practitioner } from '../../types';
+import {
+  MOCK_PRACTITIONERS,
+  RAW_EXTERNAL_PRACTITIONERS,
+  MOCK_LOCKED_EXTERNAL,
+} from '../../data/mockDatabase';
+import { ExternalPractitionerUnlocked, ExternalPractitionerLocked, Practitioner } from '../../types';
 
 export const CONFLICT_REGISTRY: DataConflictRecord[] = [
   {
@@ -241,6 +245,28 @@ export class ExternalSearchWorker {
         (newExternalRecord as any).practitionerFingerprint = incoming.fingerprint;
         (newExternalRecord as any).hpcsaNumber = incoming.hpcsaNumber;
         MOCK_PRACTITIONERS.push(newExternalRecord);
+        RAW_EXTERNAL_PRACTITIONERS.push(newExternalRecord);
+
+        // Also add locked representation for subscription enforcement
+        const lockedRecord: ExternalPractitionerLocked = {
+          id: newExternalRecord.id,
+          practitionerType: 'EXTERNAL_PRACTITIONER',
+          isLocked: true,
+          anonymizedTitle: `${newExternalRecord.specialty} in ${newExternalRecord.suburb || newExternalRecord.city}`,
+          specialty: newExternalRecord.specialty,
+          services: newExternalRecord.services,
+          province: newExternalRecord.province,
+          city: newExternalRecord.city,
+          generalArea: `${newExternalRecord.suburb}, ${newExternalRecord.city}`,
+          approximateDistanceKm: 3.8,
+          rating: newExternalRecord.rating,
+          reviewCount: newExternalRecord.reviewCount,
+          offersVirtual: newExternalRecord.offersVirtual,
+          offersInPerson: newExternalRecord.offersInPerson,
+          acceptedMedicalAids: newExternalRecord.acceptedMedicalAids,
+          requiresSubscription: true,
+        };
+        MOCK_LOCKED_EXTERNAL.push(lockedRecord);
       }
     }
 

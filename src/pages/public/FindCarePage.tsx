@@ -151,9 +151,70 @@ export const FindCarePage: React.FC = () => {
     setUserCoordinates(null);
   };
 
-  // Execute database-first search with SubscriptionService
-  const searchResults = useMemo(() => {
-    const res = SubscriptionService.searchDirectory({
+  // Trigger Live External Practitioner Discovery & Scraping Pipeline
+  const handleTriggerScraping = async () => {
+    setIsScraping(true);
+    setScrapeFeedback(null);
+
+    try {
+      const activeSpecialty = filters.specialty || searchQuery;
+
+      const result = await ExternalSearchWorker.executeDiscovery({
+        query: searchQuery || undefined,
+        practitionerName: searchQuery || undefined,
+        specialty: activeSpecialty || undefined,
+        province: (filters.province && filters.province !== 'All Provinces') ? (filters.province as any) : undefined,
+        city: (filters.city && filters.city !== 'all cities') ? filters.city : (searchLocation || undefined),
+        suburb: filters.suburb || undefined,
+        latitude: userCoordinates?.lat,
+        longitude: userCoordinates?.lng,
+        radiusKm: selectedRadiusKm,
+      });
+
+      if (result.status === 'SOURCE_BLOCKED') {
+        setScrapeFeedback({
+          type: 'BLOCKED',
+          message:
+            'External public registers returned rate-limit / CAPTCHA notice. Gracefully failing back to current directory without interruption.',
+        });
+      } else {
+        const kbSaved = Math.round(result.compressionBytesSaved / 1024);
+        setScrapeFeedback({
+          type: 'SUCCESS',
+          count: result.results.length,
+          message: `Live discovery complete: Discovered ${result.results.length} practitioners (${result.createdCount} new indexed, ${result.updatedCount} refreshed, ${result.duplicateCount} duplicates filtered, ${kbSaved} KB saved via Zstd compression).`,
+        });
+        // Invalidate memo to show newly discovered practitioners immediately
+        setSearchVersion((v) => v + 1);
+      }
+    } catch (err) {
+      setScrapeFeedback({
+        type: 'INFO',
+        message: 'External discovery worker encountered an error; local directory remains operational.',
+      });
+    } finally {
+      setIsScraping(false);
+    }
+  };
+
+  // Execute database-first search with SubscriptionService (synchronous instant + async live Supabase query)
+  const [searchResults, setSearchResults] = useState(() =>
+    SubscriptionService.searchDirectory({
+      query: searchQuery || filters.query,
+      specialty: filters.specialty,
+      province: filters.province,
+      city: filters.city || searchLocation,
+      suburb: filters.suburb,
+      userLocation: userCoordinates,
+      radiusKm: userCoordinates ? selectedRadiusKm : undefined,
+      unlockedIds,
+    })
+  );
+  const [isSearchingDb, setIsSearchingDb] = useState(false);
+
+  useEffect(() => {
+    // 1. Instant synchronous check
+    const syncRes = SubscriptionService.searchDirectory({
       query: searchQuery || filters.query,
       specialty: filters.specialty,
       province: filters.province,
@@ -163,22 +224,40 @@ export const FindCarePage: React.FC = () => {
       radiusKm: userCoordinates ? selectedRadiusKm : undefined,
       unlockedIds,
     });
+    setSearchResults(syncRes);
 
-    // Enqueue non-blocking background discovery refresh if result count is low
-    const totalCount = res.verifiedProviders.length + res.unlockedExternal.length + res.lockedExternal.length;
-    ExternalDiscoveryRefreshQueue.evaluateAndEnqueue({
+    // 2. Asynchronous query against Supabase PostGIS and full-text index
+    let isCancelled = false;
+    setIsSearchingDb(true);
+
+    SubscriptionService.searchDirectoryAsync({
       query: searchQuery || filters.query,
       specialty: filters.specialty,
       province: filters.province,
       city: filters.city || searchLocation,
       suburb: filters.suburb,
-      latitude: userCoordinates?.lat,
-      longitude: userCoordinates?.lng,
-      resultCount: totalCount,
-    });
+      userLocation: userCoordinates,
+      radiusKm: userCoordinates ? selectedRadiusKm : undefined,
+      unlockedIds,
+    })
+      .then((asyncRes) => {
+        if (!isCancelled && asyncRes) {
+          setSearchResults(asyncRes);
+        }
+      })
+      .catch((err) => {
+        console.debug('Async directory query error:', err);
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsSearchingDb(false);
+        }
+      });
 
-    return res;
-  }, [searchQuery, searchLocation, filters, userCoordinates, selectedRadiusKm, unlockedIds]);
+    return () => {
+      isCancelled = true;
+    };
+  }, [searchQuery, searchLocation, filters, userCoordinates, selectedRadiusKm, unlockedIds, searchVersion]);
 
   // Apply multi-signal ranking and tab filters
   const filteredVerified = useMemo(() => {
@@ -368,9 +447,26 @@ export const FindCarePage: React.FC = () => {
           <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between text-xs text-slate-500 gap-2">
             <div className="flex items-center gap-2">
               <Database className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Served directly from DigitalNexCare National Supabase Index</span>
+              <span className="font-semibold text-slate-700">
+                DigitalNexCare National Supabase Index {isSearchingDb ? '• Querying PostGIS...' : '• 384+ Real Ingested Practitioners'}
+              </span>
+              {isSearchingDb ? (
+                <span className="inline-block w-2 h-2 rounded-full bg-[#176BFF] animate-ping" />
+              ) : (
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+              )}
             </div>
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleTriggerScraping}
+                disabled={isScraping}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors border border-slate-200 disabled:opacity-50"
+                title="Scan public healthcare registers (HPCSA, SADA, practice registries)"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-[#176BFF] ${isScraping ? 'animate-spin' : ''}`} />
+                <span>{isScraping ? 'Discovering & Ingesting...' : 'Live External Scrape'}</span>
+              </button>
               <span className="text-slate-700 font-medium">
                 Reveals Balance:{' '}
                 <strong className="text-emerald-700 font-bold">
@@ -388,6 +484,46 @@ export const FindCarePage: React.FC = () => {
               )}
             </div>
           </div>
+
+          {/* Live Scraping & Ingestion Feedback Banner */}
+          {scrapeFeedback && (
+            <div
+              className={`p-3.5 rounded-2xl border text-xs flex items-start justify-between gap-3 animate-in fade-in slide-in-from-top-2 ${
+                scrapeFeedback.type === 'SUCCESS'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : scrapeFeedback.type === 'BLOCKED'
+                  ? 'bg-amber-50 border-amber-200 text-amber-900'
+                  : 'bg-blue-50 border-blue-200 text-blue-900'
+              }`}
+            >
+              <div className="flex items-start gap-2.5">
+                {scrapeFeedback.type === 'SUCCESS' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                ) : scrapeFeedback.type === 'BLOCKED' ? (
+                  <ShieldCheck className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                ) : (
+                  <Info className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <strong className="font-bold block">
+                    {scrapeFeedback.type === 'SUCCESS'
+                      ? 'External Discovery Pipeline Executed'
+                      : scrapeFeedback.type === 'BLOCKED'
+                      ? 'External Source Notice'
+                      : 'Discovery Notification'}
+                  </strong>
+                  <p className="mt-0.5 leading-relaxed">{scrapeFeedback.message}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setScrapeFeedback(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Content Layout: Filters Sidebar + Results / Map View */}
@@ -491,7 +627,7 @@ export const FindCarePage: React.FC = () => {
 
             {/* View Display: Map View vs List View */}
             {viewMode === 'MAP' ? (
-              <div className="bg-white rounded-3xl p-4 border border-slate-200 shadow-xs h-[650px]">
+              <div className="space-y-6 pb-12">
                 <PractitionersMapView
                   verifiedProviders={filteredVerified}
                   unlockedExternal={filteredUnlocked}
@@ -589,12 +725,23 @@ export const FindCarePage: React.FC = () => {
                       No practitioners matched your criteria
                     </h3>
                     <p className="text-xs text-slate-500 max-w-md mx-auto">
-                      Try expanding your search radius, selecting 'All Medical Aids', or clearing
-                      active filters to see more results across South Africa.
+                      Try expanding your search radius, selecting 'All Medical Aids', or running a live external discovery across HPCSA and regional practice directories.
                     </p>
-                    <Button variant="outline" size="sm" onClick={handleResetFilters}>
-                      Clear All Filters
-                    </Button>
+                    <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={handleTriggerScraping}
+                        disabled={isScraping}
+                        className="flex items-center gap-2"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isScraping ? 'animate-spin' : ''}`} />
+                        <span>{isScraping ? 'Scanning Registries...' : 'Scan Public Healthcare Registers'}</span>
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={handleResetFilters}>
+                        Clear All Filters
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
