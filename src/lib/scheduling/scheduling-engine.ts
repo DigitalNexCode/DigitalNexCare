@@ -288,11 +288,37 @@ export interface Chunk6TestResult {
   details: string;
 }
 
+const memoryStorage = new Map<string, string>();
+
+function safeGetItem(key: string): string | null {
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return memoryStorage.get(key) || null;
+    }
+  }
+  return memoryStorage.get(key) || null;
+}
+
+function safeSetItem(key: string, value: string): void {
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(key, value);
+      return;
+    } catch {
+      memoryStorage.set(key, value);
+      return;
+    }
+  }
+  memoryStorage.set(key, value);
+}
+
 export class SchedulingEngine {
   // --- APPOINTMENT TYPES ---
   static getAppointmentTypes(providerId?: string): AppointmentTypeConfig[] {
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.APPOINTMENT_TYPES);
+      const stored = safeGetItem(STORAGE_KEYS.APPOINTMENT_TYPES);
       const all: AppointmentTypeConfig[] = stored ? JSON.parse(stored) : DEFAULT_APPOINTMENT_TYPES;
       if (providerId) {
         return all.filter((t) => t.providerId === providerId && t.isActive);
@@ -318,20 +344,20 @@ export class SchedulingEngine {
     } else {
       updated = [...all, config];
     }
-    localStorage.setItem(STORAGE_KEYS.APPOINTMENT_TYPES, JSON.stringify(updated));
+    safeSetItem(STORAGE_KEYS.APPOINTMENT_TYPES, JSON.stringify(updated));
     return config;
   }
 
   static deleteAppointmentType(id: string): void {
     const all = this.getAppointmentTypes();
     const filtered = all.filter((t) => t.id !== id);
-    localStorage.setItem(STORAGE_KEYS.APPOINTMENT_TYPES, JSON.stringify(filtered));
+    safeSetItem(STORAGE_KEYS.APPOINTMENT_TYPES, JSON.stringify(filtered));
   }
 
   // --- RECURRING SCHEDULES ---
   static getRecurringSchedule(providerId: string): RecurringDaySchedule[] {
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.RECURRING_SCHEDULES);
+      const stored = safeGetItem(STORAGE_KEYS.RECURRING_SCHEDULES);
       const allMap: Record<string, RecurringDaySchedule[]> = stored
         ? JSON.parse(stored)
         : DEFAULT_RECURRING_SCHEDULES;
@@ -357,12 +383,12 @@ export class SchedulingEngine {
 
   static saveRecurringSchedule(providerId: string, schedule: RecurringDaySchedule[]): void {
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.RECURRING_SCHEDULES);
+      const stored = safeGetItem(STORAGE_KEYS.RECURRING_SCHEDULES);
       const allMap: Record<string, RecurringDaySchedule[]> = stored
         ? JSON.parse(stored)
         : { ...DEFAULT_RECURRING_SCHEDULES };
       allMap[providerId] = schedule;
-      localStorage.setItem(STORAGE_KEYS.RECURRING_SCHEDULES, JSON.stringify(allMap));
+      safeSetItem(STORAGE_KEYS.RECURRING_SCHEDULES, JSON.stringify(allMap));
     } catch (e) {
       console.error('Failed to save recurring schedule', e);
     }
@@ -371,7 +397,7 @@ export class SchedulingEngine {
   // --- SCHEDULE BLOCKS ---
   static getBlocks(providerId?: string): ScheduleBlock[] {
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.SCHEDULE_BLOCKS);
+      const stored = safeGetItem(STORAGE_KEYS.SCHEDULE_BLOCKS);
       const all: ScheduleBlock[] = stored ? JSON.parse(stored) : DEFAULT_SCHEDULE_BLOCKS;
       if (providerId) {
         return all.filter((b) => b.providerId === providerId);
@@ -390,20 +416,20 @@ export class SchedulingEngine {
       createdAt: new Date().toISOString(),
     };
     const updated = [...all, newBlock];
-    localStorage.setItem(STORAGE_KEYS.SCHEDULE_BLOCKS, JSON.stringify(updated));
+    safeSetItem(STORAGE_KEYS.SCHEDULE_BLOCKS, JSON.stringify(updated));
     return newBlock;
   }
 
   static deleteBlock(id: string): void {
     const all = this.getBlocks();
     const filtered = all.filter((b) => b.id !== id);
-    localStorage.setItem(STORAGE_KEYS.SCHEDULE_BLOCKS, JSON.stringify(filtered));
+    safeSetItem(STORAGE_KEYS.SCHEDULE_BLOCKS, JSON.stringify(filtered));
   }
 
   // --- APPOINTMENTS STORAGE ---
   static getAppointments(filter?: { providerId?: string; patientId?: string; status?: string }): DetailedAppointment[] {
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.APPOINTMENTS);
+      const stored = safeGetItem(STORAGE_KEYS.APPOINTMENTS);
       let all: DetailedAppointment[] = stored ? JSON.parse(stored) : DEFAULT_APPOINTMENTS;
       if (filter) {
         if (filter.providerId) all = all.filter((a) => a.providerId === filter.providerId);
@@ -424,7 +450,7 @@ export class SchedulingEngine {
   // --- SLOT HOLDS ---
   static getActiveHolds(): SlotHoldRecord[] {
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.SLOT_HOLDS);
+      const stored = safeGetItem(STORAGE_KEYS.SLOT_HOLDS);
       const all: SlotHoldRecord[] = stored ? JSON.parse(stored) : [];
       const now = new Date().getTime();
       // Filter out expired holds
@@ -509,14 +535,14 @@ export class SchedulingEngine {
     };
 
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.SLOT_HOLDS);
+      const stored = safeGetItem(STORAGE_KEYS.SLOT_HOLDS);
       const all: SlotHoldRecord[] = stored ? JSON.parse(stored) : [];
       // Clean up previous holds by this patient for this provider
       const cleaned = all.filter(
         (h) => !(h.patientId === params.patientId && h.providerId === params.providerId)
       );
       cleaned.push(holdRecord);
-      localStorage.setItem(STORAGE_KEYS.SLOT_HOLDS, JSON.stringify(cleaned));
+      safeSetItem(STORAGE_KEYS.SLOT_HOLDS, JSON.stringify(cleaned));
     } catch (e) {
       console.error('Failed to write slot hold', e);
     }
@@ -526,11 +552,11 @@ export class SchedulingEngine {
 
   static releaseHold(holdId: string): void {
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.SLOT_HOLDS);
+      const stored = safeGetItem(STORAGE_KEYS.SLOT_HOLDS);
       if (!stored) return;
       const all: SlotHoldRecord[] = JSON.parse(stored);
       const updated = all.map((h) => (h.holdId === holdId ? { ...h, status: 'RELEASED' as const } : h));
-      localStorage.setItem(STORAGE_KEYS.SLOT_HOLDS, JSON.stringify(updated));
+      safeSetItem(STORAGE_KEYS.SLOT_HOLDS, JSON.stringify(updated));
     } catch (e) {
       console.error('Failed to release hold', e);
     }
@@ -755,17 +781,17 @@ export class SchedulingEngine {
     try {
       const all = this.getAppointments();
       all.unshift(newAppointment);
-      localStorage.setItem(STORAGE_KEYS.APPOINTMENTS, JSON.stringify(all));
+      safeSetItem(STORAGE_KEYS.APPOINTMENTS, JSON.stringify(all));
 
       // 5. Convert hold if present
       if (params.holdId) {
-        const storedHolds = localStorage.getItem(STORAGE_KEYS.SLOT_HOLDS);
+        const storedHolds = safeGetItem(STORAGE_KEYS.SLOT_HOLDS);
         if (storedHolds) {
           const allHolds: SlotHoldRecord[] = JSON.parse(storedHolds);
           const updatedHolds = allHolds.map((h) =>
             h.holdId === params.holdId ? { ...h, status: 'CONVERTED' as const } : h
           );
-          localStorage.setItem(STORAGE_KEYS.SLOT_HOLDS, JSON.stringify(updatedHolds));
+          safeSetItem(STORAGE_KEYS.SLOT_HOLDS, JSON.stringify(updatedHolds));
         }
       }
     } catch (e) {
@@ -847,7 +873,7 @@ export class SchedulingEngine {
           : a
       );
       updated.unshift(newAppointment);
-      localStorage.setItem(STORAGE_KEYS.APPOINTMENTS, JSON.stringify(updated));
+      safeSetItem(STORAGE_KEYS.APPOINTMENTS, JSON.stringify(updated));
     } catch (e) {
       console.error('Failed to execute rescheduling transaction', e);
     }
@@ -903,7 +929,7 @@ export class SchedulingEngine {
             }
           : a
       );
-      localStorage.setItem(STORAGE_KEYS.APPOINTMENTS, JSON.stringify(updated));
+      safeSetItem(STORAGE_KEYS.APPOINTMENTS, JSON.stringify(updated));
       const updatedApt = updated.find((a) => a.id === original.id);
       return {
         success: true,

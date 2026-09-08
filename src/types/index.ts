@@ -231,6 +231,7 @@ export interface PractitionerReview {
   comment: string;
   verifiedVisit: boolean;
   practitionerResponse?: string;
+  tags?: string[];
 }
 
 export interface BasePractitioner {
@@ -1028,5 +1029,7 @@ export interface Chunk9TestSummary {
   allPassed: boolean;
   results: Chunk9TestResult[];
 }
+
+export * from './finance';
 
 

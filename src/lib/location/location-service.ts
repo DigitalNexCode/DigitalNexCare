@@ -3,7 +3,7 @@
  * Chunk 3B - Manages sa_locations, area_practitioner_coverage, provisional area creation, and autocomplete.
  */
 
-import { SouthAfricanProvince } from '../types';
+import { SouthAfricanProvince } from '../../types';
 import { AreaDiscoveryStatus, AreaCoverageStatus, SouthAfricanLocationRecord, AreaPractitionerCoverageRecord } from './types';
 import { AreaNormalizer } from './area-normalizer';
 import { supabase } from '../supabase/client';
@@ -14,6 +14,8 @@ export interface LocationAutocompleteItem {
   suburb: string | null;
   cityTown: string | null;
   province: SouthAfricanProvince;
+  latitude?: number | null;
+  longitude?: number | null;
   isCustomDiscovery?: boolean;
   practitionerCount: number;
   discoveryStatus: AreaDiscoveryStatus;
@@ -21,19 +23,39 @@ export interface LocationAutocompleteItem {
 
 // Initial robust seed of South African locations across all 9 provinces
 const INITIAL_SA_LOCATIONS: Partial<SouthAfricanLocationRecord>[] = [
+  // North West (including Hebron, Ga-Rankuwa, Brits, Rustenburg)
+  { areaName: 'Hebron', cityTown: 'Hebron', suburb: 'Hebron', province: 'North West', latitude: -25.5567, longitude: 28.0069, practitionerCount: 14 },
+  { areaName: 'Hebron Village', cityTown: 'Hebron', suburb: 'Hebron Village', province: 'North West', latitude: -25.5620, longitude: 28.0150, practitionerCount: 8 },
+  { areaName: 'Hebron Mall (Ga-Rankuwa Border)', cityTown: 'Hebron', suburb: 'Hebron Mall', province: 'North West', latitude: -25.5580, longitude: 28.0090, practitionerCount: 11 },
+  { areaName: 'Ga-Rankuwa Zone 1', cityTown: 'Ga-Rankuwa', suburb: 'Ga-Rankuwa Zone 1', province: 'North West', latitude: -25.6171, longitude: 27.9947, practitionerCount: 18 },
+  { areaName: 'Ga-Rankuwa Central', cityTown: 'Ga-Rankuwa', suburb: 'Ga-Rankuwa Central', province: 'North West', latitude: -25.6120, longitude: 28.0010, practitionerCount: 22 },
+  { areaName: 'Brits Central', cityTown: 'Brits', suburb: 'Central', province: 'North West', latitude: -25.6344, longitude: 27.7802, practitionerCount: 19 },
+  { areaName: 'Hartbeespoort', cityTown: 'Hartbeespoort', suburb: 'Central', province: 'North West', latitude: -25.7282, longitude: 27.8890, practitionerCount: 16 },
+  { areaName: 'Rustenburg CBD', cityTown: 'Rustenburg', suburb: 'Central', province: 'North West', latitude: -25.6676, longitude: 27.2421, practitionerCount: 22 },
+  { areaName: 'Potchefstroom Central', cityTown: 'Potchefstroom', suburb: 'Central', province: 'North West', latitude: -26.7145, longitude: 27.0970, practitionerCount: 20 },
+  { areaName: 'Klerksdorp Central', cityTown: 'Klerksdorp', suburb: 'Central', province: 'North West', latitude: -26.8667, longitude: 26.6667, practitionerCount: 18 },
+  { areaName: 'Mahikeng CBD', cityTown: 'Mahikeng', suburb: 'Central', province: 'North West', latitude: -25.8652, longitude: 25.6442, practitionerCount: 15 },
+
   // Gauteng
   { areaName: 'Pretoria Central', cityTown: 'Pretoria', suburb: 'Pretoria Central', province: 'Gauteng', latitude: -25.7479, longitude: 28.1873, practitionerCount: 42 },
   { areaName: 'Hatfield', cityTown: 'Pretoria', suburb: 'Hatfield', province: 'Gauteng', latitude: -25.7505, longitude: 28.2378, practitionerCount: 28 },
   { areaName: 'Menlyn', cityTown: 'Pretoria', suburb: 'Menlyn', province: 'Gauteng', latitude: -25.7824, longitude: 28.2758, practitionerCount: 35 },
   { areaName: 'Centurion Central', cityTown: 'Centurion', suburb: 'Centurion Central', province: 'Gauteng', latitude: -25.8603, longitude: 28.1895, practitionerCount: 31 },
+  { areaName: 'Mabopane Block B', cityTown: 'Pretoria', suburb: 'Mabopane', province: 'Gauteng', latitude: -25.4975, longitude: 28.0850, practitionerCount: 14 },
+  { areaName: 'Soshanguve Block L', cityTown: 'Pretoria', suburb: 'Soshanguve', province: 'Gauteng', latitude: -25.5240, longitude: 28.1130, practitionerCount: 16 },
+  { areaName: 'Hammanskraal Central', cityTown: 'Pretoria', suburb: 'Hammanskraal', province: 'Gauteng', latitude: -25.4050, longitude: 28.2750, practitionerCount: 14 },
+  { areaName: 'Mamelodi East', cityTown: 'Pretoria', suburb: 'Mamelodi East', province: 'Gauteng', latitude: -25.7150, longitude: 28.3750, practitionerCount: 20 },
+  { areaName: 'Atteridgeville', cityTown: 'Pretoria', suburb: 'Atteridgeville', province: 'Gauteng', latitude: -25.7720, longitude: 28.0750, practitionerCount: 16 },
   { areaName: 'Sandton City', cityTown: 'Johannesburg', suburb: 'Sandton', province: 'Gauteng', latitude: -26.1076, longitude: 28.0567, practitionerCount: 54 },
   { areaName: 'Rosebank', cityTown: 'Johannesburg', suburb: 'Rosebank', province: 'Gauteng', latitude: -26.1458, longitude: 28.0416, practitionerCount: 38 },
-  { areaName: 'Soweto Meadowlands', cityTown: 'Johannesburg', suburb: 'Soweto', province: 'Gauteng', latitude: -26.2485, longitude: 27.8540, practitionerCount: 16 },
-  { areaName: 'Midrand Central', cityTown: 'Johannesburg', suburb: 'Midrand', province: 'Gauteng', latitude: -25.9992, longitude: 28.1263, practitionerCount: 22 },
+  { areaName: 'Soweto Meadowlands', cityTown: 'Johannesburg', suburb: 'Soweto', province: 'Gauteng', latitude: -26.2485, longitude: 27.8540, practitionerCount: 22 },
+  { areaName: 'Midrand Central', cityTown: 'Johannesburg', suburb: 'Midrand', province: 'Gauteng', latitude: -25.9992, longitude: 28.1263, practitionerCount: 24 },
   { areaName: 'Randburg CBD', cityTown: 'Johannesburg', suburb: 'Randburg', province: 'Gauteng', latitude: -26.0936, longitude: 27.9991, practitionerCount: 25 },
   { areaName: 'Roodepoort North', cityTown: 'Johannesburg', suburb: 'Roodepoort', province: 'Gauteng', latitude: -26.1625, longitude: 27.8725, practitionerCount: 19 },
-  { areaName: 'Mabopane Block B', cityTown: 'Pretoria', suburb: 'Mabopane', province: 'Gauteng', latitude: -25.4975, longitude: 28.0850, practitionerCount: 8 },
-  { areaName: 'Soshanguve Block L', cityTown: 'Pretoria', suburb: 'Soshanguve', province: 'Gauteng', latitude: -25.5240, longitude: 28.1130, practitionerCount: 12 },
+  { areaName: 'Fourways', cityTown: 'Johannesburg', suburb: 'Fourways', province: 'Gauteng', latitude: -26.0180, longitude: 28.0120, practitionerCount: 30 },
+  { areaName: 'Bedfordview', cityTown: 'Johannesburg', suburb: 'Bedfordview', province: 'Gauteng', latitude: -26.1770, longitude: 28.1400, practitionerCount: 26 },
+  { areaName: 'Kempton Park CBD', cityTown: 'Johannesburg', suburb: 'Kempton Park', province: 'Gauteng', latitude: -26.1020, longitude: 28.2320, practitionerCount: 24 },
+
   // Western Cape
   { areaName: 'Cape Town City Bowl', cityTown: 'Cape Town', suburb: 'City Bowl', province: 'Western Cape', latitude: -33.9249, longitude: 18.4241, practitionerCount: 48 },
   { areaName: 'Claremont', cityTown: 'Cape Town', suburb: 'Claremont', province: 'Western Cape', latitude: -33.9818, longitude: 18.4651, practitionerCount: 29 },
@@ -41,24 +63,27 @@ const INITIAL_SA_LOCATIONS: Partial<SouthAfricanLocationRecord>[] = [
   { areaName: 'Stellenbosch Central', cityTown: 'Stellenbosch', suburb: 'Central', province: 'Western Cape', latitude: -33.9321, longitude: 18.8602, practitionerCount: 22 },
   { areaName: 'Bellville CBD', cityTown: 'Cape Town', suburb: 'Bellville', province: 'Western Cape', latitude: -33.8943, longitude: 18.6294, practitionerCount: 27 },
   { areaName: 'George Central', cityTown: 'George', suburb: 'Central', province: 'Western Cape', latitude: -33.9630, longitude: 22.4617, practitionerCount: 18 },
+
   // KwaZulu-Natal
   { areaName: 'Durban Central', cityTown: 'Durban', suburb: 'Durban Central', province: 'KwaZulu-Natal', latitude: -29.8587, longitude: 31.0218, practitionerCount: 36 },
   { areaName: 'Umhlanga Rocks', cityTown: 'Durban', suburb: 'Umhlanga', province: 'KwaZulu-Natal', latitude: -29.7282, longitude: 31.0856, practitionerCount: 30 },
   { areaName: 'Pietermaritzburg CBD', cityTown: 'Pietermaritzburg', suburb: 'Central', province: 'KwaZulu-Natal', latitude: -29.6006, longitude: 30.3794, practitionerCount: 21 },
   { areaName: 'Ballito Coastal', cityTown: 'Ballito', suburb: 'Central', province: 'KwaZulu-Natal', latitude: -29.5390, longitude: 31.2144, practitionerCount: 15 },
+
   // Eastern Cape
   { areaName: 'Gqeberha Central (Port Elizabeth)', cityTown: 'Gqeberha', suburb: 'Central', province: 'Eastern Cape', latitude: -33.9608, longitude: 25.6022, practitionerCount: 25 },
   { areaName: 'East London CBD', cityTown: 'East London', suburb: 'Central', province: 'Eastern Cape', latitude: -33.0153, longitude: 27.9116, practitionerCount: 20 },
   { areaName: 'Mthatha Central', cityTown: 'Mthatha', suburb: 'Central', province: 'Eastern Cape', latitude: -31.5890, longitude: 28.7840, practitionerCount: 14 },
+
   // Free State
   { areaName: 'Bloemfontein Central', cityTown: 'Bloemfontein', suburb: 'Central', province: 'Free State', latitude: -29.1183, longitude: 26.2249, practitionerCount: 22 },
+
   // Limpopo
   { areaName: 'Polokwane Central', cityTown: 'Polokwane', suburb: 'Central', province: 'Limpopo', latitude: -23.9045, longitude: 29.4688, practitionerCount: 19 },
+
   // Mpumalanga
   { areaName: 'Mbombela Central (Nelspruit)', cityTown: 'Mbombela', suburb: 'Central', province: 'Mpumalanga', latitude: -25.4753, longitude: 30.9694, practitionerCount: 17 },
-  // North West
-  { areaName: 'Rustenburg CBD', cityTown: 'Rustenburg', suburb: 'Central', province: 'North West', latitude: -25.6676, longitude: 27.2421, practitionerCount: 16 },
-  { areaName: 'Potchefstroom Central', cityTown: 'Potchefstroom', suburb: 'Central', province: 'North West', latitude: -26.7145, longitude: 27.0970, practitionerCount: 15 },
+
   // Northern Cape
   { areaName: 'Kimberley Central', cityTown: 'Kimberley', suburb: 'Central', province: 'Northern Cape', latitude: -28.7419, longitude: 24.7680, practitionerCount: 12 },
 ];
@@ -119,6 +144,27 @@ class LocationStore {
         nextRefreshAt: new Date(Date.now() + 86400000 * 7).toISOString(),
         externalSearchCount: 1,
       });
+
+      // Seed Dentist coverage for major hubs (e.g. Pretoria Central, Hatfield, Sandton)
+      if (record.areaName.includes('Pretoria') || record.areaName.includes('Hatfield') || record.areaName.includes('Sandton')) {
+        const dentalKey = `${record.id}__dentist`;
+        this.coverage.set(dentalKey, {
+          id: `cov-${dentalKey}`,
+          areaId: record.id,
+          areaName: record.areaName,
+          province: record.province,
+          categoryId: 'dental_care',
+          categoryName: 'Dental Care',
+          specialtyId: 'dentist',
+          specialtyName: 'Dentist',
+          recordsCount: Math.round((seed.practitionerCount || 10) * 0.35),
+          coverageStatus: 'FULLER_COVERAGE',
+          lastIngestedAt: '2026-09-01T00:00:00Z',
+          lastSearchAt: new Date().toISOString(),
+          nextRefreshAt: new Date(Date.now() + 86400000 * 7).toISOString(),
+          externalSearchCount: 1,
+        });
+      }
     });
     this.initialized = true;
   }
@@ -201,6 +247,8 @@ class LocationStore {
           suburb: loc.suburb,
           cityTown: loc.cityTown,
           province: loc.province,
+          latitude: loc.latitude,
+          longitude: loc.longitude,
           practitionerCount: loc.practitionerCount,
           discoveryStatus: loc.discoveryStatus,
         }));
@@ -225,6 +273,8 @@ class LocationStore {
           suburb: loc.suburb,
           cityTown: loc.cityTown,
           province: loc.province,
+          latitude: loc.latitude,
+          longitude: loc.longitude,
           practitionerCount: loc.practitionerCount,
           discoveryStatus: loc.discoveryStatus,
         });
@@ -246,6 +296,8 @@ class LocationStore {
         suburb: parsed.suburbOrTownship,
         cityTown: parsed.cityOrTown,
         province: parsed.province || 'Gauteng',
+        latitude: null,
+        longitude: null,
         isCustomDiscovery: true,
         practitionerCount: 0,
         discoveryStatus: 'DISCOVERING',
@@ -393,6 +445,8 @@ class LocationStore {
 
   /**
    * Checks if an area + category already has fresh, sufficient coverage
+   * Strictly respects Section 12: Coverage must be tracked per category.
+   * e.g., Mabopane may have 35 dentists but only 2 psychologists.
    */
   hasSufficientCoverage(areaQuery: string, specialtyOrCategory?: string): { hasCoverage: boolean; count: number; locRecord: SouthAfricanLocationRecord | null } {
     const parsed = AreaNormalizer.parseArea(areaQuery);
@@ -412,7 +466,40 @@ class LocationStore {
       return { hasCoverage: false, count: 0, locRecord: null };
     }
 
-    // If practitionerCount >= 5 and was ingested recently (< 14 days), consider covered
+    // Category-specific coverage check
+    if (specialtyOrCategory && specialtyOrCategory.trim().length > 0 && specialtyOrCategory !== 'all') {
+      const cleanSpec = specialtyOrCategory.toLowerCase().trim();
+      let matchedCoverage: AreaPractitionerCoverageRecord | null = null;
+
+      for (const cov of this.coverage.values()) {
+        if (cov.areaId === matchedLoc.id) {
+          const catMatch =
+            (cov.specialtyName && cov.specialtyName.toLowerCase().includes(cleanSpec)) ||
+            (cov.specialtyId && cleanSpec.includes(cov.specialtyId)) ||
+            (cov.categoryName && cov.categoryName.toLowerCase().includes(cleanSpec)) ||
+            (cov.categoryId && cleanSpec.includes(cov.categoryId));
+
+          if (catMatch) {
+            matchedCoverage = cov;
+            break;
+          }
+        }
+      }
+
+      if (matchedCoverage) {
+        const isSufficient = matchedCoverage.recordsCount >= 4 && matchedCoverage.coverageStatus !== 'NO_RESULTS_YET';
+        return {
+          hasCoverage: isSufficient,
+          count: matchedCoverage.recordsCount,
+          locRecord: matchedLoc,
+        };
+      }
+
+      // If specific category not found in coverage records, it is NOT covered
+      return { hasCoverage: false, count: 0, locRecord: matchedLoc };
+    }
+
+    // General area coverage check if no specific category was requested
     if (matchedLoc.practitionerCount >= 5 && matchedLoc.discoveryStatus !== 'STALE') {
       return { hasCoverage: true, count: matchedLoc.practitionerCount, locRecord: matchedLoc };
     }

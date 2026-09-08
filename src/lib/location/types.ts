@@ -3,7 +3,7 @@
  * Chunk 3B - Unknown Area Discovery, Live Search & Streaming Architecture
  */
 
-import { SouthAfricanProvince } from '../types';
+import { SouthAfricanProvince } from '../../types';
 
 export type AreaDiscoveryStatus =
   | 'KNOWN'

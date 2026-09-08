@@ -159,6 +159,46 @@
 
 ---
 
+## CHUNK 3B: Unknown Area Discovery, Live Google Maps Search, Streaming Results and Supabase Area Caching
+
+- [x] **Unknown Area Acceptance ("Never Say Area Does Not Exist")**:
+  - Prohibits hard failure or "Area does not exist" rejections for South African suburbs, townships, settlements, or rural sectors.
+  - Instantly registers provisional location records in `sa_locations` with status `DISCOVERING`.
+  - Non-blocking immediate response (< 50ms) showing progressive discovery state to the user.
+- [x] **South African Geographic Area Normalization**:
+  - `AreaNormalizer` parsing complex South African township and zone patterns (`Ga-Rankuwa Zone 5`, `Mabopane Block B`, `Tembisa Ext 5`, `Umlazi Section D`, `Mdantsane NU 3`, `Soweto Meadowlands Zone 2`).
+  - Automatic alias generation, province inference, and canonical name deduplication.
+- [x] **Live Search Streaming Engine (`LiveSearchStreamerService`)**:
+  - Database-first query against Supabase `practitioner_directory` PostGIS index before initiating external discovery.
+  - Real-time event streaming (`SEARCHING_DATABASE`, `DATABASE_READY`, `EXTERNAL_DISCOVERY_STARTED`, `PRACTITIONER_STREAMED`, `COMPLETED`).
+  - Emits practitioners incrementally as discovered by external workers without blocking on full discovery completion.
+  - Normalized, deduplicated, and compressed prior to emission and Supabase upsert.
+  - Server-side subscription projection masking applied during streaming.
+- [x] **Concurrent Request Coalescing**:
+  - Active search registry sharing discovery job execution across identical concurrent queries.
+  - Automatic job lifecycle cleanup using unref timers to prevent memory leaks or hanging event loops.
+- [x] **First-Result Latency Performance Tracking**:
+  - Emits telemetry metrics tracking `timeToFirstDbResultMs` and `timeToFirstExternalResultMs`.
+- [x] **Interactive UI Integration**:
+  - `LiveSearchStreamerBanner` displaying real-time discovery state, animated radar indicators, streamed practitioner counts, and latency metrics.
+  - `FindCarePage.tsx` search triggers and zero-result fallback actions ("Discover & Stream Practitioners in [Area] Now").
+- [x] **Chunk 3B Automated Test Suite**:
+  - `src/lib/search/chunk3b-tests.ts`: All 5 test cases passing with 100% success rate:
+    1. Unknown Area Discovery & Streaming (Winterveld Extension 3) [PASS]
+    2. Known Area Instant Database Cache Hit (Pretoria + Dentist) [PASS]
+    3. Known Area + Sparse Category Discovery (Pretoria + Audiologist) [PASS]
+    4. Unknown Practitioner Name Lookup (Dr Mandla Sithole) [PASS]
+    5. South African Township / Zone Normalization & Graceful Fallback [PASS]
+- [x] **Chunk 3B Google Search & Maps Practitioner Discovery Suite**:
+  - `src/lib/search/chunk-google-discovery-tests.ts`: All 5 test cases verified and passing (100%):
+    1. Practitioner Name Search & DB Caching ("Dr Mokoena Dentist" discovered, normalized with dental specialty, saved to Supabase index, and instantly served from DB on subsequent search) [PASS]
+    2. Google Search & Maps Query Generation (Constructed specific queries per category e.g. "Psychologist Mabopane South Africa", "Dentist Pretoria" without generic fallback) [PASS]
+    3. Category-Specific Coverage Tracking (Mabopane with dentists correctly reports sufficient coverage for Dentist, but triggers external discovery for Psychologist) [PASS]
+    4. Stable Fingerprint & Deduplication Consistency (SHA-256 fingerprint generated from normalized signals: updates existing record on phone format variations rather than inserting duplicate) [PASS]
+    5. Failure Handling & Data Preservation (Graceful fallback on discovery interruption, preserving all existing directory records and displaying contextual alerts) [PASS]
+
+---
+
 ## CHUNK 4: Provider Onboarding, Existing Practitioner Claiming and Verification
 
 - [x] **Provider Onboarding Start ("FIND MY EXISTING PROFILE")**:
@@ -522,6 +562,65 @@
 - [x] Fixed Map View layout boundary conflict with Footer (removed fixed container clamping and enabled clean natural responsive height with generous bottom clearance).
 - [x] Mobile Bottom Navigation Bar (`MobileBottomNav`) with 5 dedicated touch-optimized tabs (Find Care, Near Me, AI Care Navigator, Bookings/Plans, Account) and safe-area insets.
 - [x] Live Public Registry Scraping & Discovery Pipeline (`ExternalSearchWorker.executeDiscovery`) fully integrated with interactive triggers, real-time feedback banner, deduplication counters, and zero-results state integration.
+- [x] User-Specific Reveal Independence: Replaced global reveal storage with per-user tracking via `UserUnlockService` and `external_practitioner_unlocks`. Patient A's unlock never unlocks or leaks contact data to Patient B.
+- [x] Global Directory Search Visibility: Newly registered practitioners in canonical directory index immediately appear in national directory queries for all users.
+- [x] Profile Claim Flow & Mandatory Reasons: Admin approval and decline operations strictly require documented reasons, updating provider verification status, data authority, and audit trail.
+- [x] Automated Governance Suite (26/26 passing) & In-App Launch Test Suite (25/25 passing) verified.
+
+---
+
+## CHUNK 9A: Practitioner Commercial Model, 7% Platform Fee, Bank Onboarding, Weekly Settlements, Pay-at-Practice Subscriptions & Financial Statements
+
+- [x] **Transparent Commercial Model (Zero Fee Barrier to Join)**:
+  - Free practitioner profile registration, claiming, statutory verification, and service listing.
+  - Zero upfront onboarding fee or paywall to join DigitalNexCare.
+- [x] **7.00% Platform Fee & Pass-Through Processing**:
+  - Exact 7.00% platform fee on all online prepaid card bookings (`ONLINE_CARD`).
+  - Integer-cents math (`FinancialMath`) preventing floating-point rounding errors.
+  - Separate pass-through gateway fees (Paystack: 2.9% + R1.00; Yoco: 2.95%) kept distinct from the 7% platform fee.
+  - Immediate digital receipt issuance (`REC-DNC-` / `DNC-RCP-`) with provider & patient copies.
+- [x] **Practice Flex (Pay-at-Practice) Subscription Model**:
+  - R149.00/month flat subscription for practices accepting in-person cash/card payments (`PAY_AT_PRACTICE`).
+  - 10 included qualifying completed bookings per calendar month.
+  - R25.00 per extra completed booking overage charge.
+  - Configurable pricing parameters via `CommercialConfig` and `finance-constants.ts`.
+- [x] **Secure Bank Onboarding & Payout Verification**:
+  - Support for all major South African banks (FNB, Standard Bank, ABSA, Nedbank, Capitec, Discovery, Investec, TymeBank, etc.) with automated branch codes.
+  - Bank account numbers masked across all display layers (e.g. `•••• 4821`).
+  - Strict verification workflow (`DRAFT` -> `PENDING_VERIFICATION` -> `VERIFIED`).
+  - Bank account changes trigger `CHANGE_PENDING` status, halting payouts until verified with full audit logging.
+- [x] **Idempotent Weekly Settlement Batch Engine**:
+  - Monday 00:00:00 to Sunday 23:59:59 SAST cutoff window with Monday payout generation.
+  - Unique composite key (`practiceId__periodStart__periodEnd`) guaranteeing idempotency.
+  - Automatic deduction of 7% platform fees, gateway fees, Practice Flex subscriptions, overages, and manual adjustments.
+- [x] **Tax-Compliant Financial Statements & Audit Logging**:
+  - Immutable weekly payout statements (`DNC-SET-`) and monthly invoices with VAT/tax breakdown.
+  - Full audit logging (`FinancialAuditLogEntry`) for every financial action.
+  - Manual adjustments and credit notes support for dispute resolution.
+- [x] **Interactive Dashboards & Modal Suites**:
+  - Provider Finance Dashboard (`/provider/finance`): Overview cards, weekly settlement history, revenue trends, bank details management, and billing settings.
+  - Platform Admin Finance Dashboard (`/admin/finance`): Platform-wide volume, fee collection, pending bank verifications, batch settlement generation, and manual adjustment tools.
+  - Modals: `BankOnboardingModal`, `CommercialTermsModal`, `PaymentReceiptModal`, `StatementViewModal`.
+- [x] **Database Migration & Schemas**:
+  - Created `/supabase/migrations/20260901000008_practitioner_commercial_and_settlements.sql` with tables for bank accounts, commercial configs, settlements, transactions, subscriptions, statements, audit logs, and `practice_staff` (resolving relation dependencies with `can_access_practice_finance` RLS policies).
+- [x] **Automated Acceptance Testing (10/10 Passing)**:
+  - Validated integer calculations, 7% fee isolation, gateway fee separation, Practice Flex tiers, bank masking, idempotent settlements, tax statements, online prepayments, and terms acceptance.
+
+---
+
+## CHUNK 9B: Centralized Practitioner Directory Persistence, Real-Time Supabase Sync & Verified Patient Reviews Modal
+
+- [x] **Centralized Directory Store (`DirectoryStore`)**:
+  - Automatically captures and normalizes external practitioners discovered during live regional crawls and searches.
+  - Generates RFC 4122 v4 UUIDs for foreign-key integrity in Supabase PostgreSQL tables.
+  - Saves normalized practices directly into `practitioner_directory` and compresses source snapshots into `practitioner_source_snapshots`.
+  - Maintains synchronized in-memory and local caches (`REAL_DIRECTORY_CACHE`, `RAW_EXTERNAL_PRACTITIONERS`, `MOCK_PRACTITIONERS`).
+  - Seamlessly integrates with `search-worker.ts` so all external discovery results are instantly persisted.
+- [x] **Verified Patient Reviews & Community Experience Suite**:
+  - Interactive `PractitionerReviewsModal` displaying rating breakdown, category scores (bedside manner, wait time, explanation clarity, clinic cleanliness), verified visit badges, and practice responses.
+  - Integrated across all provider surfaces: `ProviderCard`, `UnlockedExternalCard`, `LockedExternalCard` (with protected review blurb and unlock CTA), and `ExternalPractitionerDetailPage`.
+  - Type-safe review entity modeling with tag support and genuine South African regional feedback.
+
 
 
 

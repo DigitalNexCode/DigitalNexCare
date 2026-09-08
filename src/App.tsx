@@ -65,9 +65,11 @@ import { ProviderLocationsPage } from './pages/provider/ProviderLocationsPage';
 import { ProviderServicesPage } from './pages/provider/ProviderServicesPage';
 import { ProviderReviewsPage } from './pages/provider/ProviderReviewsPage';
 import { ProviderAnalyticsPage } from './pages/provider/ProviderAnalyticsPage';
+import { ProviderFinanceDashboardPage } from './pages/provider/ProviderFinanceDashboardPage';
 
 // Admin Protected Pages
 import { AdminDashboardPage } from './pages/admin/AdminDashboardPage';
+import { AdminFinanceDashboardPage } from './pages/admin/AdminFinanceDashboardPage';
 import { SystemHealthDashboardPage } from './pages/admin/SystemHealthDashboardPage';
 import { AdminLaunchReadinessPage } from './pages/admin/AdminLaunchReadinessPage';
 import { AdminClaimsPage } from './pages/admin/AdminClaimsPage';
@@ -316,6 +318,14 @@ export default function App() {
                   </ProtectedRoute>
                 }
               />
+              <Route
+                path="/provider/finance"
+                element={
+                  <ProtectedRoute allowedRoles={['PROVIDER', 'PRACTICE_MANAGER', 'FINANCE_BILLING', 'SUPER_ADMIN']}>
+                    <ProviderFinanceDashboardPage />
+                  </ProtectedRoute>
+                }
+              />
 
               {/* Admin & Trust Operations Portal */}
               <Route
@@ -395,6 +405,16 @@ export default function App() {
                     allowedRoles={['PLATFORM_ADMIN', 'SUPER_ADMIN']}
                   >
                     <AdminSubscriptionsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/finance"
+                element={
+                  <ProtectedRoute
+                    allowedRoles={['PLATFORM_ADMIN', 'SUPER_ADMIN', 'FINANCE_BILLING']}
+                  >
+                    <AdminFinanceDashboardPage />
                   </ProtectedRoute>
                 }
               />

@@ -21,6 +21,9 @@ import {
   MOCK_LOCKED_EXTERNAL,
 } from '../../data/mockDatabase';
 import { SearchFilterState } from '../../types';
+import { LiveSearchStreamer } from '../../lib/search/live-search-streaming';
+import { LiveSearchStreamerBanner } from '../../components/search/LiveSearchStreamerBanner';
+import { LiveSearchStatus } from '../../lib/location/types';
 import {
   Search,
   SlidersHorizontal,
@@ -44,11 +47,13 @@ import {
   DownloadCloud,
   Layers,
   Activity,
+  Radio,
+  AlertCircle,
 } from 'lucide-react';
 
 export const FindCarePage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { revealsRemaining, unlockedIds, subscriptionPlan } = useAuth();
+  const { user, revealsRemaining, unlockedIds, subscriptionPlan } = useAuth();
 
   const [searchQuery, setSearchQuery] = useState(searchParams.get('q') || '');
   const [searchLocation, setSearchLocation] = useState(searchParams.get('loc') || '');
@@ -197,6 +202,89 @@ export const FindCarePage: React.FC = () => {
     }
   };
 
+  // Live Streaming Search State (Chunk 3B)
+  const [liveStreamState, setLiveStreamState] = useState<{
+    isStreaming: boolean;
+    status: LiveSearchStatus;
+    statusMessage: string;
+    streamedCount: number;
+    areaName: string;
+    metrics?: any;
+  } | null>(null);
+  const activeLiveCancelRef = React.useRef<(() => void) | null>(null);
+
+  const startLiveStreamingSearch = (forceRefresh = false) => {
+    if (activeLiveCancelRef.current) {
+      activeLiveCancelRef.current();
+    }
+
+    setLiveStreamState({
+      isStreaming: true,
+      status: 'SEARCHING_DATABASE',
+      statusMessage: `Checking DigitalNexCare National Index for ${searchLocation || 'South Africa'}...`,
+      streamedCount: 0,
+      areaName: searchLocation || 'South Africa',
+    });
+
+    const { cancel } = LiveSearchStreamer.startSearch(
+      {
+        query: searchQuery || undefined,
+        specialty: filters.specialty || undefined,
+        category: filters.specialty || undefined,
+        province: filters.province && filters.province !== 'All Provinces' ? filters.province : undefined,
+        city: filters.city && filters.city !== 'all cities' ? filters.city : (searchLocation || undefined),
+        suburb: filters.suburb || (searchLocation || undefined),
+        userCoordinates: userCoordinates ? { latitude: userCoordinates.lat, longitude: userCoordinates.lng } : null,
+        radiusKm: selectedRadiusKm,
+        unlockedIds,
+        forceExternalRefresh: forceRefresh,
+      },
+      (event) => {
+        if (event.type === 'STATUS_CHANGE' || event.type === 'DISCOVERY_STARTED' || event.type === 'DATABASE_READY') {
+          setLiveStreamState((prev) => ({
+            isStreaming: true,
+            status: event.status,
+            statusMessage: event.statusMessage,
+            streamedCount: event.totalCount || (prev?.streamedCount ?? 0),
+            areaName: searchLocation || 'South Africa',
+            metrics: event.metrics || prev?.metrics,
+          }));
+        } else if (event.type === 'PRACTITIONER_STREAMED') {
+          setLiveStreamState((prev) => ({
+            isStreaming: true,
+            status: event.status,
+            statusMessage: event.statusMessage,
+            streamedCount: event.totalCount || ((prev?.streamedCount ?? 0) + 1),
+            areaName: searchLocation || 'South Africa',
+          }));
+          setSearchVersion((v) => v + 1);
+        } else if (event.type === 'COMPLETED' || event.type === 'PARTIAL') {
+          setLiveStreamState((prev) => ({
+            isStreaming: false,
+            status: event.status,
+            statusMessage: event.statusMessage,
+            streamedCount: event.totalCount || (prev?.streamedCount ?? 0),
+            areaName: searchLocation || 'South Africa',
+            metrics: event.metrics,
+          }));
+          setSearchVersion((v) => v + 1);
+        } else if (event.type === 'ERROR') {
+          setLiveStreamState((prev) => ({
+            isStreaming: false,
+            status: 'FAILED',
+            statusMessage: 'Finding additional practitioners is temporarily unavailable.',
+            streamedCount: event.totalCount || (prev?.streamedCount ?? 0),
+            areaName: searchLocation || 'South Africa',
+            metrics: event.metrics,
+          }));
+          setSearchVersion((v) => v + 1);
+        }
+      }
+    );
+
+    activeLiveCancelRef.current = cancel;
+  };
+
   // Execute database-first search with SubscriptionService (synchronous instant + async live Supabase query)
   const [searchResults, setSearchResults] = useState(() =>
     SubscriptionService.searchDirectory({
@@ -208,6 +296,7 @@ export const FindCarePage: React.FC = () => {
       userLocation: userCoordinates,
       radiusKm: userCoordinates ? selectedRadiusKm : undefined,
       unlockedIds,
+      userId: user?.id,
     })
   );
   const [isSearchingDb, setIsSearchingDb] = useState(false);
@@ -223,6 +312,7 @@ export const FindCarePage: React.FC = () => {
       userLocation: userCoordinates,
       radiusKm: userCoordinates ? selectedRadiusKm : undefined,
       unlockedIds,
+      userId: user?.id,
     });
     setSearchResults(syncRes);
 
@@ -239,6 +329,7 @@ export const FindCarePage: React.FC = () => {
       userLocation: userCoordinates,
       radiusKm: userCoordinates ? selectedRadiusKm : undefined,
       unlockedIds,
+      userId: user?.id,
     })
       .then((asyncRes) => {
         if (!isCancelled && asyncRes) {
@@ -373,9 +464,7 @@ export const FindCarePage: React.FC = () => {
               <Button
                 variant="primary"
                 className="w-full font-bold"
-                onClick={() => {
-                  /* active search filter applied */
-                }}
+                onClick={() => startLiveStreamingSearch(false)}
               >
                 Search
               </Button>
@@ -456,7 +545,18 @@ export const FindCarePage: React.FC = () => {
                 <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
               )}
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => startLiveStreamingSearch(true)}
+                disabled={liveStreamState?.isStreaming}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-[#176BFF] font-bold text-xs transition-colors border border-blue-200 disabled:opacity-50"
+                title="Stream live practitioner discovery from public maps & directories"
+              >
+                <Radio className={`w-3.5 h-3.5 ${liveStreamState?.isStreaming ? 'animate-pulse' : ''}`} />
+                <span>{liveStreamState?.isStreaming ? 'Streaming Discovery...' : 'Live Stream Discovery'}</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleTriggerScraping}
@@ -465,7 +565,7 @@ export const FindCarePage: React.FC = () => {
                 title="Scan public healthcare registers (HPCSA, SADA, practice registries)"
               >
                 <RefreshCw className={`w-3.5 h-3.5 text-[#176BFF] ${isScraping ? 'animate-spin' : ''}`} />
-                <span>{isScraping ? 'Discovering & Ingesting...' : 'Live External Scrape'}</span>
+                <span>{isScraping ? 'Discovering & Ingesting...' : 'External Scrape'}</span>
               </button>
               <span className="text-slate-700 font-medium">
                 Reveals Balance:{' '}
@@ -541,6 +641,22 @@ export const FindCarePage: React.FC = () => {
 
           {/* Main Results Column */}
           <main className="flex-1 min-w-0 w-full space-y-4">
+            {/* Live Streaming Discovery Banner */}
+            {liveStreamState && (
+              <LiveSearchStreamerBanner
+                isStreaming={liveStreamState.isStreaming}
+                status={liveStreamState.status}
+                statusMessage={liveStreamState.statusMessage}
+                streamedCount={liveStreamState.streamedCount}
+                areaName={liveStreamState.areaName}
+                metrics={liveStreamState.metrics}
+                onCancel={() => {
+                  if (activeLiveCancelRef.current) activeLiveCancelRef.current();
+                  setLiveStreamState(null);
+                }}
+              />
+            )}
+
             {/* Filter Tabs, View Switcher & Sort Header */}
             <div className="bg-white rounded-3xl p-4 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               {/* Filter Tabs */}
@@ -715,28 +831,74 @@ export const FindCarePage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Zero Results State */}
+                {/* Section 16: Failure Handling Banner */}
+                {liveStreamState?.status === 'FAILED' && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-amber-900">
+                    <div className="flex items-center gap-2 text-xs font-semibold">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Finding additional practitioners is temporarily unavailable. Displaying existing records.</span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => startLiveStreamingSearch(true)}
+                      className="border-amber-300 text-amber-800 hover:bg-amber-100 text-xs font-bold shrink-0"
+                    >
+                      TRY AGAIN
+                    </Button>
+                  </div>
+                )}
+
+                {/* Section 13: Search for More Practitioners Button */}
+                {totalResultsCount > 0 && (
+                  <div className="bg-white rounded-3xl p-6 border border-slate-200 text-center space-y-3">
+                    <div className="text-xs text-slate-500">
+                      Need more options? We can scan public Google Search & Maps directories for additional practitioners.
+                    </div>
+                    <Button
+                      variant="outline"
+                      onClick={() => startLiveStreamingSearch(true)}
+                      disabled={liveStreamState?.isStreaming}
+                      className="inline-flex items-center gap-2 border-[#176BFF] text-[#176BFF] hover:bg-blue-50 font-bold px-6 py-2.5 rounded-xl shadow-xs"
+                    >
+                      <Radio className={`w-4 h-4 ${liveStreamState?.isStreaming ? 'animate-pulse text-[#176BFF]' : ''}`} />
+                      <span>{liveStreamState?.isStreaming ? 'Searching for more practitioners...' : 'SEARCH FOR MORE PRACTITIONERS'}</span>
+                    </Button>
+                  </div>
+                )}
+
+                {/* Section 15: Zero Results State */}
                 {totalResultsCount === 0 && (
                   <div className="bg-white rounded-3xl p-12 text-center border border-slate-200 space-y-4">
                     <div className="w-12 h-12 rounded-2xl bg-blue-50 text-[#176BFF] flex items-center justify-center mx-auto">
                       <Search className="w-6 h-6" />
                     </div>
                     <h3 className="text-base font-bold text-slate-900">
-                      No practitioners matched your criteria
+                      We couldn't find practitioners for this search yet.
                     </h3>
                     <p className="text-xs text-slate-500 max-w-md mx-auto">
-                      Try expanding your search radius, selecting 'All Medical Aids', or running a live external discovery across HPCSA and regional practice directories.
+                      Try expanding your search radius, selecting 'All Medical Aids', or running a live external discovery across South African public registers.
                     </p>
                     <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                       <Button
                         variant="primary"
+                        size="sm"
+                        onClick={() => startLiveStreamingSearch(true)}
+                        disabled={liveStreamState?.isStreaming}
+                        className="flex items-center gap-2 font-bold"
+                      >
+                        <Radio className={`w-3.5 h-3.5 ${liveStreamState?.isStreaming ? 'animate-pulse' : ''}`} />
+                        <span>Discover Practitioners in {searchLocation || 'This Area'}</span>
+                      </Button>
+                      <Button
+                        variant="outline"
                         size="sm"
                         onClick={handleTriggerScraping}
                         disabled={isScraping}
                         className="flex items-center gap-2"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 ${isScraping ? 'animate-spin' : ''}`} />
-                        <span>{isScraping ? 'Scanning Registries...' : 'Scan Public Healthcare Registers'}</span>
+                        <span>{isScraping ? 'Scanning Registries...' : 'Scan Public Registers'}</span>
                       </Button>
                       <Button variant="outline" size="sm" onClick={handleResetFilters}>
                         Clear All Filters

@@ -36,15 +36,17 @@ export function simpleHash(str: string): string {
  * Generates a deterministic practitioner identity fingerprint using key normalized signals.
  */
 export function generatePractitionerFingerprint(signals: FingerprintSignals): string {
-  // If official HPCSA registration number is present, it forms the strongest canonical component
+  // If official HPCSA registration number is present, it forms an authoritative component
   const hpcsaSignal = signals.hpcsaNumber ? signals.hpcsaNumber.trim().toUpperCase().replace(/\s+/g, '') : 'NONE';
   const nameSignal = signals.normalizedName.trim().toLowerCase().replace(/\s+/g, '');
-  const phoneSignal = signals.normalizedPhone ? signals.normalizedPhone.replace(/\D/g, '') : 'NO_PHONE';
-  const locationSignal = `${signals.suburb.toLowerCase().trim()}:${signals.city.toLowerCase().trim()}:${signals.province.toLowerCase().trim()}`;
   const practiceSignal = signals.normalizedPracticeName ? signals.normalizedPracticeName.toLowerCase().replace(/\s+/g, '') : '';
+  const phoneSignal = signals.normalizedPhone ? signals.normalizedPhone.replace(/\D/g, '') : 'NO_PHONE';
+  const addressSignal = signals.normalizedAddress ? signals.normalizedAddress.toLowerCase().trim().replace(/[^a-z0-9]/g, '') : '';
+  const locationSignal = `${signals.suburb.toLowerCase().trim()}:${signals.city.toLowerCase().trim()}:${signals.province.toLowerCase().trim()}`;
 
-  const rawFingerprintString = `DNC:SA:${hpcsaSignal}|${nameSignal}|${phoneSignal}|${practiceSignal}|${locationSignal}`;
-  return `fp_${simpleHash(rawFingerprintString)}`;
+  // SHA-256 stable canonical representation: normalized_name + normalized_practice_name + normalized_phone + normalized_address
+  const canonicalIdentityString = `DNC:SA:${hpcsaSignal}|${nameSignal}|${practiceSignal}|${phoneSignal}|${addressSignal}|${locationSignal}`;
+  return `fp_${simpleHash(canonicalIdentityString)}`;
 }
 
 /**

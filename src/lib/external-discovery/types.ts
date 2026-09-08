@@ -61,6 +61,8 @@ export interface RawExternalPractitioner {
   rawServices?: string[];
   rawLanguages?: string[];
   rawAcceptedMedicalAids?: string[];
+  openingStatus?: string | null;
+  websiteVisited?: boolean;
   capturedAt: string;
 }
 
@@ -100,6 +102,7 @@ export interface FingerprintSignals {
   normalizedName: string;
   normalizedPracticeName?: string;
   normalizedPhone?: string;
+  normalizedAddress?: string;
   hpcsaNumber?: string;
   suburb: string;
   city: string;
@@ -139,6 +142,8 @@ export interface DiscoveryResult {
   source: string;
   foundCount: number;
   normalizedPractitioners: NormalizedPractitioner[];
+  results?: RawExternalPractitioner[];
+  rawPractitioners?: RawExternalPractitioner[];
   errorMessage?: string;
   durationMs: number;
 }

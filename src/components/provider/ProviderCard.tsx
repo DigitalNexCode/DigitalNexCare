@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { DigitalNexCareProvider, AppointmentSlot } from '../../types';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import { PractitionerReviewsModal } from '../reviews/PractitionerReviewsModal';
 import {
   CheckCircle2,
   Star,
@@ -37,6 +38,7 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
   compact = false,
 }) => {
   const [activeSlotId, setActiveSlotId] = useState<string | undefined>(selectedSlotId);
+  const [isReviewsOpen, setIsReviewsOpen] = useState(false);
 
   const handleSlotClick = (slot: AppointmentSlot, e: React.MouseEvent) => {
     e.preventDefault();
@@ -130,13 +132,22 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
 
           {/* Rating Block */}
           <div className="hidden sm:flex flex-col items-end flex-shrink-0">
-            <div className="flex items-center gap-1 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200/80">
+            <button
+              type="button"
+              onClick={() => setIsReviewsOpen(true)}
+              className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100/80 px-2.5 py-1 rounded-xl border border-amber-200/80 transition-colors cursor-pointer text-left group"
+              title="View verified patient reviews"
+            >
               <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
-              <span className="text-sm font-bold text-amber-900">{provider.rating.toFixed(1)}</span>
-            </div>
-            <span className="text-[11px] text-slate-500 mt-1 font-medium">
+              <span className="text-sm font-bold text-amber-900 group-hover:text-amber-950">{provider.rating.toFixed(1)}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsReviewsOpen(true)}
+              className="text-[11px] text-slate-500 hover:text-[#176BFF] underline mt-1 font-medium cursor-pointer"
+            >
               {provider.reviewCount} verified reviews
-            </span>
+            </button>
           </div>
         </div>
 
@@ -263,6 +274,18 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
           </Link>
         </div>
       </div>
+
+      {/* Verified Reviews Modal */}
+      <PractitionerReviewsModal
+        isOpen={isReviewsOpen}
+        onClose={() => setIsReviewsOpen(false)}
+        practitionerId={provider.id}
+        practitionerName={provider.fullName}
+        specialty={provider.specialty}
+        overallRating={provider.rating}
+        totalReviewCount={provider.reviewCount}
+        isUnlocked={true}
+      />
     </div>
   );
 };

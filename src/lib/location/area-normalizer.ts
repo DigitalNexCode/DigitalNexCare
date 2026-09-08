@@ -3,7 +3,7 @@
  * Chunk 3B - Standardized geographic normalization for cities, suburbs, townships, and unknown areas.
  */
 
-import { SouthAfricanProvince } from '../types';
+import { SouthAfricanProvince } from '../../types';
 
 export interface NormalizedAreaInfo {
   rawQuery: string;
@@ -41,6 +41,18 @@ const CITY_ABBREVIATION_MAP: Record<string, { canonical: string; province: South
   nelspruit: { canonical: 'Mbombela', province: 'Mpumalanga' },
   potch: { canonical: 'Potchefstroom', province: 'North West' },
   rustenburg: { canonical: 'Rustenburg', province: 'North West' },
+  hebron: { canonical: 'Hebron', province: 'North West' },
+  'ga-rankuwa': { canonical: 'Ga-Rankuwa', province: 'North West' },
+  garankuwa: { canonical: 'Ga-Rankuwa', province: 'North West' },
+  brits: { canonical: 'Brits', province: 'North West' },
+  klerksdorp: { canonical: 'Klerksdorp', province: 'North West' },
+  mahikeng: { canonical: 'Mahikeng', province: 'North West' },
+  hartbeespoort: { canonical: 'Hartbeespoort', province: 'North West' },
+  mabopane: { canonical: 'Mabopane', province: 'Gauteng' },
+  soshanguve: { canonical: 'Soshanguve', province: 'Gauteng' },
+  hammanskraal: { canonical: 'Hammanskraal', province: 'Gauteng' },
+  mamelodi: { canonical: 'Mamelodi', province: 'Gauteng' },
+  atteridgeville: { canonical: 'Atteridgeville', province: 'Gauteng' },
   sandton: { canonical: 'Johannesburg', province: 'Gauteng' },
   centurion: { canonical: 'Pretoria', province: 'Gauteng' },
   midrand: { canonical: 'Johannesburg', province: 'Gauteng' },

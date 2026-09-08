@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ExternalPractitionerUnlocked } from '../../types';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import { PractitionerReviewsModal } from '../reviews/PractitionerReviewsModal';
 import {
   Phone,
   Mail,
@@ -21,46 +22,53 @@ interface UnlockedExternalCardProps {
 }
 
 export const UnlockedExternalCard: React.FC<UnlockedExternalCardProps> = ({ practitioner }) => {
+  const [isReviewsOpen, setIsReviewsOpen] = useState(false);
   const approxDistance = 3.2; // Default realistic distance in km
   const travel = calculateTravelEstimate(approxDistance);
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs hover:shadow-md transition-all duration-200 p-5 sm:p-6 flex flex-col justify-between">
-      <div>
-        {/* Header */}
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Link
-                to={`/external-practitioners/${practitioner.id}`}
-                className="text-lg sm:text-xl font-bold text-slate-900 hover:text-[#176BFF] transition-colors"
-              >
-                {practitioner.fullName}
-              </Link>
-              <Badge variant="slate" size="sm" icon={<Compass className="w-3 h-3" />}>
-                External Practitioner
-              </Badge>
+    <>
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs hover:shadow-md transition-all duration-200 p-5 sm:p-6 flex flex-col justify-between">
+        <div>
+          {/* Header */}
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Link
+                  to={`/external-practitioners/${practitioner.id}`}
+                  className="text-lg sm:text-xl font-bold text-slate-900 hover:text-[#176BFF] transition-colors"
+                >
+                  {practitioner.fullName}
+                </Link>
+                <Badge variant="slate" size="sm" icon={<Compass className="w-3 h-3" />}>
+                  External Practitioner
+                </Badge>
+              </div>
+
+              <p className="text-sm font-semibold text-slate-700 mt-0.5">{practitioner.specialty}</p>
+
+              <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1">
+                <span className="font-medium text-slate-700">{practitioner.practiceName}</span>
+                <span>•</span>
+                <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                <span>
+                  {practitioner.suburb}, {practitioner.city}
+                </span>
+              </div>
             </div>
 
-            <p className="text-sm font-semibold text-slate-700 mt-0.5">{practitioner.specialty}</p>
-
-            <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1">
-              <span className="font-medium text-slate-700">{practitioner.practiceName}</span>
-              <span>•</span>
-              <MapPin className="w-3.5 h-3.5 text-slate-400" />
-              <span>
-                {practitioner.suburb}, {practitioner.city}
-              </span>
-            </div>
+            {/* Rating Box - Clickable to open full reviews */}
+            <button
+              type="button"
+              onClick={() => setIsReviewsOpen(true)}
+              className="flex items-center gap-1 bg-amber-50/80 hover:bg-amber-100/90 px-2.5 py-1 rounded-xl border border-amber-200/60 transition-colors cursor-pointer text-left group"
+              title="View reviews and patient comments"
+            >
+              <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
+              <span className="text-sm font-bold text-slate-800 group-hover:text-amber-950">{practitioner.rating.toFixed(1)}</span>
+              <span className="text-xs text-slate-500 group-hover:text-amber-800 underline">({practitioner.reviewCount} reviews)</span>
+            </button>
           </div>
-
-          {/* Rating */}
-          <div className="flex items-center gap-1 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200">
-            <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
-            <span className="text-sm font-bold text-slate-800">{practitioner.rating.toFixed(1)}</span>
-            <span className="text-xs text-slate-400">({practitioner.reviewCount})</span>
-          </div>
-        </div>
 
         {/* Destination Address & Travel Estimates */}
         <div className="mt-3.5 p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs text-slate-600">
@@ -137,5 +145,18 @@ export const UnlockedExternalCard: React.FC<UnlockedExternalCardProps> = ({ prac
         </div>
       </div>
     </div>
+
+      {/* Reviews Modal with full unlocked review comments */}
+      <PractitionerReviewsModal
+        isOpen={isReviewsOpen}
+        onClose={() => setIsReviewsOpen(false)}
+        practitionerId={practitioner.id}
+        practitionerName={practitioner.fullName}
+        specialty={practitioner.specialty}
+        overallRating={practitioner.rating}
+        totalReviewCount={practitioner.reviewCount}
+        isUnlocked={true}
+      />
+    </>
   );
 };

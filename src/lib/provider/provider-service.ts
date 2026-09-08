@@ -410,6 +410,47 @@ export class ProviderService {
   }
 
   /**
+   * High-level submitProfileClaim method returning structured status
+   */
+  static submitProfileClaim(params: {
+    userId: string;
+    candidate: {
+      id: string;
+      name: string;
+      specialty: string;
+      practice: string;
+      location: string;
+      source: string;
+    };
+    council: 'HPCSA' | 'SADA' | 'SANC' | 'SAPC' | 'AHPCSA';
+    registrationNumber: string;
+    practiceNumber: string;
+    claimantName: string;
+    claimantEmail: string;
+    claimantPhone: string;
+  }): { success: boolean; claim?: PractitionerClaimRecord; message: string } {
+    const claim = this.createClaim({
+      practitionerId: params.candidate.id,
+      claimantUserId: params.userId,
+      claimantName: params.claimantName,
+      claimantEmail: params.claimantEmail,
+      claimantPhone: params.claimantPhone,
+      council: params.council,
+      registrationNumber: params.registrationNumber,
+      practiceNumber: params.practiceNumber,
+      practiceName: params.candidate.practice,
+      directoryCandidate: {
+        name: params.candidate.name,
+        specialty: params.candidate.specialty,
+        practice: params.candidate.practice,
+        location: params.candidate.location,
+        source: params.candidate.source,
+      },
+    });
+    return { success: true, claim, message: 'Claim submitted successfully.' };
+  }
+
+  /**
    * Submit or update professional verification dossier
    * Provider CANNOT self-verify: initial status is always SUBMITTED or UNDER_REVIEW
    */
@@ -489,12 +530,17 @@ export class ProviderService {
    * Admin / Verifier actions: Approve Claim & Merge into Joined Provider
    * Links Auth user + Provider + Practitioner Directory Record
    * Sets is_joined = true and converts record to DIGITALNEXCARE_PROVIDER
+   * Constitutional constraint: Admin may not approve or decline without recording a reason.
    */
   static adminApproveClaimAndMerge(params: {
     claimId: string;
     verifierId: string;
-    notes?: string;
+    notes: string;
   }): { success: boolean; convertedProvider?: DigitalNexCareProvider; message: string } {
+    if (!params.notes || params.notes.trim().length === 0) {
+      return { success: false, message: 'Mandatory approval reason required. Admin cannot approve without recording a reason.' };
+    }
+
     const claim = CLAIMS_REGISTRY.find((c) => c.id === params.claimId);
     if (!claim) {
       return { success: false, message: 'Claim record not found.' };
@@ -503,7 +549,7 @@ export class ProviderService {
     claim.status = 'CLAIMED';
     claim.reviewedAt = new Date().toISOString();
     claim.reviewedBy = params.verifierId;
-    claim.resolutionNotes = params.notes || 'Claim approved by Trust Ops after statutory verification.';
+    claim.resolutionNotes = params.notes;
 
     // Check if there is an external practitioner to convert
     const extIndex = RAW_EXTERNAL_PRACTITIONERS.findIndex((p) => p.id === claim.practitionerId);
@@ -597,6 +643,41 @@ export class ProviderService {
       success: true,
       convertedProvider,
       message: `Successfully approved claim and merged ${claim.claimantName} into verified DigitalNexCare provider.`,
+    };
+  }
+
+  /**
+   * Admin / Verifier action: Decline/Reject Claim Request
+   * Constitutional constraint: Admin may not approve or decline without recording a reason.
+   */
+  static adminRejectClaim(params: {
+    claimId: string;
+    verifierId: string;
+    reason: string;
+  }): { success: boolean; message: string } {
+    if (!params.reason || params.reason.trim().length === 0) {
+      return { success: false, message: 'Mandatory decline reason required. Admin cannot decline without recording a reason.' };
+    }
+
+    const claim = CLAIMS_REGISTRY.find((c) => c.id === params.claimId);
+    if (!claim) {
+      return { success: false, message: 'Claim record not found.' };
+    }
+
+    claim.status = 'REJECTED';
+    claim.reviewedAt = new Date().toISOString();
+    claim.reviewedBy = params.verifierId;
+    claim.rejectionReason = params.reason;
+
+    // If candidate exists, reset claimStatus
+    const target = RAW_EXTERNAL_PRACTITIONERS.find((p) => p.id === claim.practitionerId);
+    if (target) {
+      target.claimStatus = 'REJECTED';
+    }
+
+    return {
+      success: true,
+      message: `Claim #${params.claimId} has been declined. Reason recorded: "${params.reason}".`,
     };
   }
 

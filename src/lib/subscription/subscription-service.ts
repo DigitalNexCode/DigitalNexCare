@@ -20,9 +20,10 @@ import {
   DigitalNexCareProvider,
   SouthAfricanProvince,
 } from '../../types';
-import { MOCK_PROVIDERS, MOCK_UNLOCKED_EXTERNAL, MOCK_LOCKED_EXTERNAL } from '../../data/mockDatabase';
+import { MOCK_PROVIDERS, MOCK_UNLOCKED_EXTERNAL, MOCK_LOCKED_EXTERNAL, MOCK_PRACTITIONERS, RAW_EXTERNAL_PRACTITIONERS } from '../../data/mockDatabase';
 import { projectPractitionerForClient, getPlanRevealLimit } from '../supabase/projection';
 import { supabase, isSupabaseConfigured } from '../supabase/client';
+import { UserUnlockService } from './user-unlock-service';
 
 export interface RevealRequest {
   userId: string;
@@ -55,7 +56,7 @@ export interface Chunk5TestResult {
 }
 
 // In-Memory Real Directory Cache loaded directly from Supabase
-const REAL_DIRECTORY_CACHE = {
+export const REAL_DIRECTORY_CACHE = {
   verified: [] as (DigitalNexCareProvider & { distanceKm?: number })[],
   locked: [] as (ExternalPractitionerLocked & { distanceKm?: number })[],
   unlocked: [] as (ExternalPractitionerUnlocked & { distanceKm?: number })[],
@@ -207,10 +208,65 @@ export class SubscriptionService {
    * 5. Secure Unlocked Entity Hydration
    */
   static revealExternalPractitioner(req: RevealRequest): RevealResponse {
+    // If user ID is provided, strictly enforce through UserUnlockService
+    if (req.userId) {
+      const userResult = UserUnlockService.unlockForUser({
+        userId: req.userId,
+        practitionerId: req.practitionerId,
+        currentPlan: req.currentPlan,
+        revealsUsedThisMonth: req.revealsUsedThisMonth,
+        unlockedIds: req.unlockedIds,
+      });
+
+      if (userResult.status === 'ALREADY_UNLOCKED') {
+        const entity = userResult.unlockedPractitioner || this.hydrateExternalPractitioner(req.practitionerId);
+        return {
+          status: 'ALREADY_UNLOCKED',
+          success: true,
+          practitionerId: req.practitionerId,
+          plan: req.currentPlan,
+          revealsUsed: userResult.revealsUsed,
+          revealsRemaining: userResult.revealsRemaining,
+          monthlyLimit: userResult.monthlyLimit,
+          unlockedPractitioner: entity,
+          message: userResult.message,
+        };
+      }
+
+      if (userResult.status === 'LIMIT_REACHED') {
+        return {
+          status: 'LIMIT_REACHED',
+          success: false,
+          practitionerId: req.practitionerId,
+          plan: req.currentPlan,
+          revealsUsed: userResult.revealsUsed,
+          revealsRemaining: 0,
+          monthlyLimit: userResult.monthlyLimit,
+          error: 'EXTERNAL_PRACTITIONER_LIMIT_REACHED',
+          message: userResult.message,
+        };
+      }
+
+      if (userResult.status === 'ALLOW') {
+        const entity = userResult.unlockedPractitioner || this.hydrateExternalPractitioner(req.practitionerId);
+        return {
+          status: 'ALLOW',
+          success: true,
+          practitionerId: req.practitionerId,
+          plan: req.currentPlan,
+          revealsUsed: userResult.revealsUsed,
+          revealsRemaining: userResult.revealsRemaining,
+          monthlyLimit: userResult.monthlyLimit,
+          unlockedPractitioner: entity,
+          message: userResult.message,
+        };
+      }
+    }
+
     const limit = getPlanRevealLimit(req.currentPlan);
 
-    // Check if practitioner was already revealed during current period
-    if (req.unlockedIds.includes(req.practitionerId)) {
+    // Fallback check if practitioner was already revealed during current period
+    if (req.unlockedIds && req.unlockedIds.includes(req.practitionerId)) {
       const existing = MOCK_UNLOCKED_EXTERNAL.find((p) => p.id === req.practitionerId) ||
         this.hydrateExternalPractitioner(req.practitionerId);
 
@@ -400,6 +456,7 @@ export class SubscriptionService {
     radiusKm?: number;
     unlockedIds: string[];
     patientId?: string;
+    userId?: string;
   }): Promise<{
     verifiedProviders: (DigitalNexCareProvider & { distanceKm?: number })[];
     unlockedExternal: (ExternalPractitionerUnlocked & { distanceKm?: number })[];
@@ -413,9 +470,10 @@ export class SubscriptionService {
         const prov = params.province && params.province !== 'All Provinces' ? params.province : null;
         const spec = params.specialty && params.specialty !== 'All Specialties' ? params.specialty : null;
         const city = params.city && params.city !== 'All Cities' ? params.city : null;
+        const effectivePatientId = params.userId || params.patientId || null;
 
         const { data, error } = await supabase.rpc('search_practitioners_projected', {
-          p_patient_id: params.patientId || null,
+          p_patient_id: effectivePatientId,
           p_query: q,
           p_specialty_code: spec,
           p_province: prov,
@@ -473,7 +531,8 @@ export class SubscriptionService {
     suburb?: string;
     userLocation?: { lat: number; lng: number } | null;
     radiusKm?: number;
-    unlockedIds: string[];
+    unlockedIds?: string[];
+    userId?: string;
   }): {
     verifiedProviders: (DigitalNexCareProvider & { distanceKm?: number })[];
     unlockedExternal: (ExternalPractitionerUnlocked & { distanceKm?: number })[];
@@ -482,37 +541,39 @@ export class SubscriptionService {
     dataSource: 'SUPABASE_PRIMARY_INDEX' | 'EXTERNAL_DISCOVERY_FALLBACK';
   } {
     const q = (params.query || '').trim().toLowerCase();
+    const qTokens = q ? q.split(/\s+/).filter((t) => t.length > 1) : [];
     const spec = (params.specialty || '').trim().toLowerCase();
     const prov = (params.province || '').trim();
     const city = (params.city || '').trim().toLowerCase();
     const suburb = (params.suburb || '').trim().toLowerCase();
+    const cleanCity = city ? city.split(',')[0].trim() : '';
+    const cleanSuburb = suburb ? suburb.split(',')[0].trim() : '';
     const practice = (params.practice || '').trim().toLowerCase();
-    const unlockedSet = new Set(params.unlockedIds);
+    const unlockedSet = params.userId
+      ? new Set(UserUnlockService.getUserUnlockedPractitionerIds(params.userId))
+      : new Set(params.unlockedIds || []);
     const radius = params.radiusKm || 50;
+
+    const matchesQueryText = (searchableText: string) => {
+      if (!q) return true;
+      const lower = searchableText.toLowerCase();
+      if (lower.includes(q)) return true;
+      if (qTokens.length > 1) {
+        return qTokens.every((token) => lower.includes(token));
+      }
+      return false;
+    };
 
     // Use Real Directory Cache if loaded, otherwise fallback to mock records
     const baseVerified = REAL_DIRECTORY_CACHE.isLoaded && REAL_DIRECTORY_CACHE.verified.length > 0
       ? REAL_DIRECTORY_CACHE.verified
       : MOCK_PROVIDERS;
 
-    const baseUnlocked = REAL_DIRECTORY_CACHE.isLoaded && REAL_DIRECTORY_CACHE.unlocked.length > 0
-      ? REAL_DIRECTORY_CACHE.unlocked
-      : MOCK_UNLOCKED_EXTERNAL;
-
-    const baseLocked = REAL_DIRECTORY_CACHE.isLoaded && REAL_DIRECTORY_CACHE.locked.length > 0
-      ? REAL_DIRECTORY_CACHE.locked
-      : MOCK_LOCKED_EXTERNAL;
-
     // 1. Filter Verified Providers (always 100% unlocked & bookable)
     let verified = baseVerified.filter((p) => {
       if (q) {
-        const matchesName = p.fullName.toLowerCase().includes(q);
-        const matchesSpec = p.specialty.toLowerCase().includes(q);
-        const matchesPractice = p.practiceName.toLowerCase().includes(q);
-        const matchesCity = p.city.toLowerCase().includes(q);
-        const matchesSuburb = p.suburb.toLowerCase().includes(q);
-        const matchesServices = p.services.some((s) => s.toLowerCase().includes(q));
-        if (!matchesName && !matchesSpec && !matchesPractice && !matchesCity && !matchesSuburb && !matchesServices) {
+        const searchable = `${p.fullName} ${p.specialty} ${p.practiceName} ${p.city} ${p.suburb} ${p.services.join(' ')}`;
+        if (!matchesQueryText(searchable)) {
           return false;
         }
       }
@@ -522,11 +583,13 @@ export class SubscriptionService {
       if (prov && prov !== 'All Provinces' && p.province !== prov) {
         return false;
       }
-      if (city && city !== 'all cities' && !p.city.toLowerCase().includes(city)) {
-        return false;
+      if (cleanCity && cleanCity !== 'all cities') {
+        const matchesCity = p.city.toLowerCase().includes(cleanCity) || p.suburb.toLowerCase().includes(cleanCity) || (p.address && p.address.toLowerCase().includes(cleanCity));
+        if (!matchesCity) return false;
       }
-      if (suburb && !p.suburb.toLowerCase().includes(suburb)) {
-        return false;
+      if (cleanSuburb) {
+        const matchesSuburb = p.suburb.toLowerCase().includes(cleanSuburb) || p.city.toLowerCase().includes(cleanSuburb) || (p.address && p.address.toLowerCase().includes(cleanSuburb));
+        if (!matchesSuburb) return false;
       }
       if (practice && !p.practiceName.toLowerCase().includes(practice)) {
         return false;
@@ -549,33 +612,28 @@ export class SubscriptionService {
       verified = verified.filter((p) => p.distanceKm === undefined || p.distanceKm <= radius);
     }
 
-    // 2. Filter Unlocked External Practitioners (revealed by user)
-    let unlocked = baseUnlocked.filter((p) => {
-      if (!unlockedSet.has(p.id)) return false;
+    // 2. Filter & Project All Canonical External Practitioners
+    const allExternal = RAW_EXTERNAL_PRACTITIONERS;
+    const unlocked: (ExternalPractitionerUnlocked & { distanceKm?: number })[] = [];
+    const locked: (ExternalPractitionerLocked & { distanceKm?: number })[] = [];
+
+    for (const p of allExternal) {
       if (q) {
-        const matchesName = p.fullName.toLowerCase().includes(q);
-        const matchesSpec = p.specialty.toLowerCase().includes(q);
-        const matchesPractice = p.practiceName.toLowerCase().includes(q);
-        const matchesCity = p.city.toLowerCase().includes(q);
-        const matchesSuburb = p.suburb.toLowerCase().includes(q);
-        if (!matchesName && !matchesSpec && !matchesPractice && !matchesCity && !matchesSuburb) {
-          return false;
-        }
+        const searchable = `${p.fullName} ${p.specialty} ${p.practiceName} ${p.city} ${p.suburb} ${(p.services || []).join(' ')}`;
+        if (!matchesQueryText(searchable)) continue;
       }
-      if (spec && spec !== 'all specialties' && !p.specialty.toLowerCase().includes(spec)) {
-        return false;
+      if (spec && spec !== 'all specialties' && !p.specialty.toLowerCase().includes(spec)) continue;
+      if (prov && prov !== 'All Provinces' && p.province !== prov) continue;
+      if (cleanCity && cleanCity !== 'all cities') {
+        const matchesCity = p.city.toLowerCase().includes(cleanCity) || p.suburb.toLowerCase().includes(cleanCity) || (p.address && p.address.toLowerCase().includes(cleanCity));
+        if (!matchesCity) continue;
       }
-      if (prov && prov !== 'All Provinces' && p.province !== prov) {
-        return false;
+      if (cleanSuburb) {
+        const matchesSuburb = p.suburb.toLowerCase().includes(cleanSuburb) || p.city.toLowerCase().includes(cleanSuburb) || (p.address && p.address.toLowerCase().includes(cleanSuburb));
+        if (!matchesSuburb) continue;
       }
-      if (city && city !== 'all cities' && !p.city.toLowerCase().includes(city)) {
-        return false;
-      }
-      if (suburb && !p.suburb.toLowerCase().includes(suburb)) {
-        return false;
-      }
-      return true;
-    }).map((p) => {
+      if (practice && !p.practiceName.toLowerCase().includes(practice)) continue;
+
       let distanceKm: number | undefined;
       if (params.userLocation && p.coordinates) {
         distanceKm = calculateDistanceKm(
@@ -584,46 +642,72 @@ export class SubscriptionService {
           p.coordinates.latitude,
           p.coordinates.longitude
         );
+        if (radius && distanceKm > radius) continue;
       }
-      return { ...p, distanceKm };
-    });
 
-    if (params.userLocation && radius) {
-      unlocked = unlocked.filter((p) => p.distanceKm === undefined || p.distanceKm <= radius);
+      if (unlockedSet.has(p.id)) {
+        unlocked.push({ ...p, distanceKm });
+      } else {
+        const lockedCard: ExternalPractitionerLocked & { distanceKm?: number } = {
+          id: p.id,
+          practitionerType: 'EXTERNAL_PRACTITIONER',
+          isLocked: true,
+          anonymizedTitle: `${p.specialty} in ${p.suburb || p.city}`,
+          specialty: p.specialty,
+          services: p.services || ['General Consultations', 'Healthcare Services'],
+          province: p.province,
+          city: p.city,
+          generalArea: `${p.suburb || p.city}, ${p.city}`,
+          approximateDistanceKm: distanceKm,
+          rating: p.rating,
+          reviewCount: p.reviewCount,
+          offersVirtual: p.offersVirtual,
+          offersInPerson: p.offersInPerson,
+          acceptedMedicalAids: p.acceptedMedicalAids,
+          requiresSubscription: true,
+          distanceKm,
+        };
+        locked.push(lockedCard);
+      }
     }
 
-    // 3. Filter Locked External Practitioners (Server-Side Projected & Redacted)
-    let locked = baseLocked.filter((p) => {
-      if (unlockedSet.has(p.id)) return false;
-      if (q) {
-        const matchesTitle = p.anonymizedTitle.toLowerCase().includes(q);
-        const matchesSpec = p.specialty.toLowerCase().includes(q);
-        const matchesCity = p.city.toLowerCase().includes(q);
-        const matchesArea = p.generalArea.toLowerCase().includes(q);
-        if (!matchesTitle && !matchesSpec && !matchesCity && !matchesArea) {
-          return false;
-        }
+    // 4. Incorporate Dynamically Discovered Directory Practitioners (MOCK_PRACTITIONERS / Supabase Cache)
+    const existingIds = new Set([
+      ...verified.map((p) => p.id),
+      ...unlocked.map((p) => p.id),
+      ...locked.map((p) => p.id),
+    ]);
+
+    for (const raw of MOCK_PRACTITIONERS as any[]) {
+      if (existingIds.has(raw.id)) continue;
+
+      const rawName = raw.full_name || raw.display_name || '';
+      const rawSpec = raw.specialty || '';
+      const rawCity = raw.city || '';
+      const rawSuburb = raw.suburb || '';
+      const rawPractice = raw.practice_name || '';
+      const rawServices = Array.isArray(raw.services) ? raw.services.join(' ') : '';
+      const searchable = `${rawName} ${rawSpec} ${rawPractice} ${rawCity} ${rawSuburb} ${rawServices}`;
+
+      if (q && !matchesQueryText(searchable)) continue;
+      if (spec && spec !== 'all specialties' && !rawSpec.toLowerCase().includes(spec)) continue;
+      if (prov && prov !== 'All Provinces' && raw.province !== prov) continue;
+      if (city && city !== 'all cities' && !rawCity.toLowerCase().includes(city)) continue;
+      if (suburb && !rawSuburb.toLowerCase().includes(suburb)) continue;
+
+      existingIds.add(raw.id);
+
+      const isUnlocked = unlockedSet.has(raw.id);
+      const projected = projectPractitionerForClient(raw, isUnlocked);
+
+      if (projected.practitionerType === 'DIGITALNEXCARE_PROVIDER') {
+        verified.push(projected as any);
+      } else if (isUnlocked) {
+        unlocked.push(projected as any);
+      } else {
+        locked.push(projected as any);
       }
-      if (spec && spec !== 'all specialties' && !p.specialty.toLowerCase().includes(spec)) {
-        return false;
-      }
-      if (prov && prov !== 'All Provinces' && p.province !== prov) {
-        return false;
-      }
-      if (city && city !== 'all cities' && !p.city.toLowerCase().includes(city)) {
-        return false;
-      }
-      if (suburb && !p.generalArea.toLowerCase().includes(suburb)) {
-        return false;
-      }
-      return true;
-    }).map((p) => {
-      let distanceKm = p.approximateDistanceKm;
-      if (params.userLocation && !distanceKm) {
-        distanceKm = 4.2;
-      }
-      return { ...p, distanceKm };
-    });
+    }
 
     const totalCount = verified.length + unlocked.length + locked.length;
 

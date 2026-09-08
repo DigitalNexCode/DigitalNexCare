@@ -106,6 +106,8 @@ export const SA_CITIES_BY_PROVINCE: Record<SouthAfricanProvince, string[]> = {
     'Mahikeng',
     'Brits',
     'Hartbeespoort',
+    'Hebron',
+    'Ga-Rankuwa',
   ],
   'Northern Cape': [
     'Kimberley',

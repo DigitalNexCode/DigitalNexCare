@@ -224,6 +224,7 @@ export async function runChunk3BTests(): Promise<Chunk3BTestResult[]> {
           suburb: 'Hatfield',
           city: 'Pretoria',
           province: 'Gauteng',
+          unlockedIds: ['*'],
         },
         (event) => {
           if (event.practitioner && (event.practitioner.fullName || event.practitioner.display_name)) {

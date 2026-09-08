@@ -265,6 +265,7 @@ export function normalizeRawPractitioner(raw: RawExternalPractitioner): Normaliz
     normalizedName,
     normalizedPracticeName,
     normalizedPhone,
+    normalizedAddress: address.toLowerCase().trim(),
     hpcsaNumber: hpcsaNumber || undefined,
     suburb,
     city,

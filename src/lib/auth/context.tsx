@@ -9,6 +9,7 @@ import {
 } from '../../types';
 import { SUBSCRIPTION_PLANS } from '../constants';
 import { SubscriptionService } from '../subscription/subscription-service';
+import { UserUnlockService } from '../subscription/user-unlock-service';
 
 export interface SignUpData {
   fullName: string;
@@ -87,10 +88,10 @@ const DEFAULT_USER: UserProfile = {
   suburb: 'Hatfield',
   address: '42 Burnett Street',
   currentPlan: 'NEXCARE_FREE',
-  revealsUsedThisMonth: 1,
+  revealsUsedThisMonth: 0,
   monthlyRevealLimit: 2,
   billingPeriodEnd: '2026-09-30',
-  unlockedPractitionerIds: ['ext-001'],
+  unlockedPractitionerIds: [],
   dependants: [
     {
       id: 'dep-1',
@@ -117,8 +118,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<UserProfile | null>(DEFAULT_USER);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const [subscriptionPlan, setSubscriptionPlanState] = useState<PatientSubscriptionTier>('NEXCARE_FREE');
-  const [unlockedIds, setUnlockedIds] = useState<string[]>(['ext-001']);
-  const [revealsUsed, setRevealsUsed] = useState<number>(1);
+  const [unlockedIds, setUnlockedIds] = useState<string[]>(() => {
+    return DEFAULT_USER ? UserUnlockService.getUserUnlockedPractitionerIds(DEFAULT_USER.id) : [];
+  });
+  const [revealsUsed, setRevealsUsed] = useState<number>(() => {
+    return DEFAULT_USER ? UserUnlockService.getUserQuotaStatus(DEFAULT_USER.id, 'NEXCARE_FREE').revealsUsed : 0;
+  });
 
   const planInfo = SUBSCRIPTION_PLANS[subscriptionPlan];
   const totalAllowance = planInfo.monthlyReveals;
@@ -137,37 +142,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const setSubscriptionPlan = (newPlan: PatientSubscriptionTier) => {
     setSubscriptionPlanState(newPlan);
     if (user) {
+      const quota = UserUnlockService.getUserQuotaStatus(user.id, newPlan);
+      setRevealsUsed(quota.revealsUsed);
       setUser({
         ...user,
         currentPlan: newPlan,
         monthlyRevealLimit: SUBSCRIPTION_PLANS[newPlan].monthlyReveals,
+        revealsUsedThisMonth: quota.revealsUsed,
       });
     }
   };
 
   const unlockPractitioner = (id: string): { success: boolean; message?: string } => {
-    const result = SubscriptionService.revealExternalPractitioner({
-      userId: user?.id || 'anonymous-user',
-      practitionerId: id,
-      currentPlan: subscriptionPlan,
-      revealsUsedThisMonth: revealsUsed,
-      unlockedIds,
-    });
-
-    if (result.status === 'ALREADY_UNLOCKED') {
-      return { success: true, message: result.message };
+    if (!user) {
+      return {
+        success: false,
+        message: 'Please sign in to unlock external practitioner details.',
+      };
     }
 
-    if (result.status === 'ALLOW') {
-      setUnlockedIds((prev) => [...prev, id]);
+    const result = UserUnlockService.unlockForUser({
+      userId: user.id,
+      practitionerId: id,
+      currentPlan: subscriptionPlan,
+    });
+
+    if (result.status === 'ALREADY_UNLOCKED' || result.status === 'ALLOW') {
+      const updatedUnlocked = UserUnlockService.getUserUnlockedPractitionerIds(user.id);
+      setUnlockedIds(updatedUnlocked);
       setRevealsUsed(result.revealsUsed);
-      if (user) {
-        setUser({
-          ...user,
-          revealsUsedThisMonth: result.revealsUsed,
-          unlockedPractitionerIds: [...user.unlockedPractitionerIds, id],
-        });
-      }
+      setUser({
+        ...user,
+        revealsUsedThisMonth: result.revealsUsed,
+        unlockedPractitionerIds: updatedUnlocked,
+      });
       return { success: true, message: result.message };
     }
 
@@ -181,9 +189,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Simulated authentication with smart defaults per role
     const isDoctor = specifiedRole === 'PROVIDER' || email.includes('dr.') || email.includes('provider');
     const isAdmin = specifiedRole === 'PLATFORM_ADMIN' || specifiedRole === 'SUPER_ADMIN';
+    const newUserId = `usr-${Date.now()}`;
+    const userUnlocks = UserUnlockService.getUserUnlockedPractitionerIds(newUserId);
+    const userQuota = UserUnlockService.getUserQuotaStatus(newUserId, 'NEXCARE_FREE');
 
     const signedInUser: UserProfile = {
-      id: `usr-${Date.now()}`,
+      id: newUserId,
       email,
       fullName: isDoctor ? 'Dr. Naledi Mokoena' : isAdmin ? 'Admin User' : 'Lerato Khumalo',
       phone: '+27 82 555 9876',
@@ -195,10 +206,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       city: 'Pretoria',
       suburb: 'Hatfield',
       currentPlan: 'NEXCARE_FREE',
-      revealsUsedThisMonth: 0,
+      revealsUsedThisMonth: userQuota.revealsUsed,
       monthlyRevealLimit: 2,
       billingPeriodEnd: '2026-09-30',
-      unlockedPractitionerIds: ['ext-001'],
+      unlockedPractitionerIds: userUnlocks,
       title: isDoctor ? 'Dr.' : undefined,
       specialty: isDoctor ? 'General Practitioner' : undefined,
       hpcsaNumber: isDoctor ? 'MP 0789456' : undefined,
@@ -209,6 +220,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setUser(signedInUser);
     setRoleState(specifiedRole);
+    setUnlockedIds(userUnlocks);
+    setRevealsUsed(userQuota.revealsUsed);
     return { success: true };
   };
 
@@ -310,6 +323,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = () => {
     setUser(null);
     setPendingVerificationEmail(null);
+    setUnlockedIds([]);
+    setRevealsUsed(0);
   };
 
   return (

@@ -9,7 +9,7 @@ import { LocateFixed, MapPin, Database, RefreshCw, ShieldCheck, AlertCircle } fr
 import { DigitalNexCareProvider, ExternalPractitionerLocked, ExternalPractitionerUnlocked } from '../../types';
 
 export const NearMePage: React.FC = () => {
-  const { unlockedIds } = useAuth();
+  const { user, unlockedIds } = useAuth();
   const [coordinates, setCoordinates] = useState<{ lat: number; lng: number } | null>(null);
   const [status, setStatus] = useState<'IDLE' | 'LOCATING' | 'GRANTED' | 'DENIED'>('IDLE');
   const [radiusKm, setRadiusKm] = useState(25);
@@ -53,6 +53,7 @@ export const NearMePage: React.FC = () => {
       userLocation: { lat, lng },
       radiusKm,
       unlockedIds,
+      userId: user?.id,
     });
     setNearbyProviders(syncRes.verifiedProviders);
     setNearbyUnlocked(syncRes.unlockedExternal);
@@ -66,6 +67,7 @@ export const NearMePage: React.FC = () => {
       userLocation: { lat, lng },
       radiusKm,
       unlockedIds,
+      userId: user?.id,
     })
       .then((asyncRes) => {
         if (!isCancelled && asyncRes) {

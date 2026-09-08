@@ -4,6 +4,7 @@ import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { useAuth } from '../../lib/auth/context';
 import { SubscriptionModal } from '../subscription/SubscriptionModal';
+import { PractitionerReviewsModal } from '../reviews/PractitionerReviewsModal';
 import {
   Lock,
   MapPin,
@@ -31,6 +32,7 @@ export const LockedExternalCard: React.FC<LockedExternalCardProps> = ({
   const [isUnlocking, setIsUnlocking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
+  const [isReviewsModalOpen, setIsReviewsModalOpen] = useState(false);
 
   const displayDistance = userDistanceKm || practitioner.approximateDistanceKm || 4.2;
 
@@ -100,15 +102,20 @@ export const LockedExternalCard: React.FC<LockedExternalCardProps> = ({
 
             {/* Rating Box */}
             {practitioner.rating && (
-              <div className="flex items-center gap-1 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200/80">
+              <button
+                type="button"
+                onClick={() => setIsReviewsModalOpen(true)}
+                className="flex items-center gap-1 bg-slate-50 hover:bg-amber-50/60 px-2.5 py-1 rounded-xl border border-slate-200/80 transition-colors cursor-pointer text-left group"
+                title="View reviews and patient feedback"
+              >
                 <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
-                <span className="text-sm font-bold text-slate-700">
+                <span className="text-sm font-bold text-slate-700 group-hover:text-amber-700">
                   {practitioner.rating.toFixed(1)}
                 </span>
                 {practitioner.reviewCount && (
-                  <span className="text-xs text-slate-400">({practitioner.reviewCount})</span>
+                  <span className="text-xs text-slate-400 group-hover:text-amber-600 underline">({practitioner.reviewCount} reviews)</span>
                 )}
-              </div>
+              </button>
             )}
           </div>
 
@@ -203,6 +210,22 @@ export const LockedExternalCard: React.FC<LockedExternalCardProps> = ({
         onClose={() => setIsSubscriptionModalOpen(false)}
         onUpgradeSuccess={() => {
           if (onUnlockedSuccess) onUnlockedSuccess();
+        }}
+      />
+
+      {/* Reviews & Patient Ratings Modal (Locked View) */}
+      <PractitionerReviewsModal
+        isOpen={isReviewsModalOpen}
+        onClose={() => setIsReviewsModalOpen(false)}
+        practitionerId={practitioner.id}
+        practitionerName={practitioner.anonymizedTitle}
+        specialty={practitioner.specialty}
+        overallRating={practitioner.rating || 4.7}
+        totalReviewCount={practitioner.reviewCount || 18}
+        isUnlocked={false}
+        onUnlockRequest={() => {
+          setIsReviewsModalOpen(false);
+          handleReveal();
         }}
       />
     </>

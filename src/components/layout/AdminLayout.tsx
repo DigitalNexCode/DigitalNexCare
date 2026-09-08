@@ -14,6 +14,7 @@ import {
   Layers,
   Settings,
   CreditCard,
+  Receipt,
   Lock,
 } from 'lucide-react';
 
@@ -46,6 +47,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     { label: 'Ingestion Jobs', path: '/admin/ingestion-jobs', icon: <Database className="w-4 h-4" /> },
     { label: 'Snapshot Storage', path: '/admin/snapshots', icon: <HardDrive className="w-4 h-4" /> },
     { label: 'Subscriptions Admin', path: '/admin/subscriptions', icon: <CreditCard className="w-4 h-4" /> },
+    { label: 'Finance & Settlements', path: '/admin/finance', icon: <Receipt className="w-4 h-4 text-emerald-400" /> },
     { label: 'Database & Security', path: '/admin/database', icon: <Database className="w-4 h-4 text-[#00E5D4]" /> },
     { label: 'Audit Logs', path: '/admin/audit-logs', icon: <Activity className="w-4 h-4" /> },
   ];

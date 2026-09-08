@@ -347,7 +347,7 @@ export const ProviderFindExistingPage: React.FC = () => {
 
                           <Link to="/provider/manual-registration">
                             <Button variant="ghost" size="sm">
-                              CREATE MANUALLY
+                              I CANNOT FIND MY PROFILE
                             </Button>
                           </Link>
                         </div>

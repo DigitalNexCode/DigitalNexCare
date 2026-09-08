@@ -26,33 +26,57 @@ export const AdminClaimsPage: React.FC = () => {
   const [claims, setClaims] = useState<PractitionerClaimRecord[]>(CLAIMS_REGISTRY);
   const [selectedClaim, setSelectedClaim] = useState<PractitionerClaimRecord | null>(null);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+  const [actionErrorMsg, setActionErrorMsg] = useState<string | null>(null);
+  const [activeDecision, setActiveDecision] = useState<'APPROVE' | 'REJECT' | null>(null);
+  const [decisionReason, setDecisionReason] = useState<string>('');
 
   const handleGrantClaim = (claimId: string) => {
+    if (!decisionReason.trim()) {
+      setActionErrorMsg('Constitutional requirement: Admin may not approve a claim without recording a statutory reason.');
+      return;
+    }
+
     const res = ProviderService.adminApproveClaimAndMerge({
       claimId,
       verifierId: 'AdminTrustOps-01',
-      notes: 'Approved after verification of statutory council registration and practice affiliation.',
+      notes: decisionReason.trim(),
     });
 
     if (res.success) {
       setClaims([...CLAIMS_REGISTRY]);
       setActionSuccessMsg(res.message);
       setSelectedClaim(null);
+      setActiveDecision(null);
+      setDecisionReason('');
+      setActionErrorMsg(null);
       setTimeout(() => setActionSuccessMsg(null), 5000);
+    } else {
+      setActionErrorMsg(res.message);
     }
   };
 
   const handleRejectClaim = (claimId: string) => {
-    const claim = CLAIMS_REGISTRY.find((c) => c.id === claimId);
-    if (claim) {
-      claim.status = 'REJECTED';
-      claim.reviewedAt = new Date().toISOString();
-      claim.reviewedBy = 'AdminTrustOps-01';
-      claim.rejectionReason = 'Registration number could not be matched with statutory registry.';
+    if (!decisionReason.trim()) {
+      setActionErrorMsg('Constitutional requirement: Admin may not decline a claim without recording a reason.');
+      return;
+    }
+
+    const res = ProviderService.adminRejectClaim({
+      claimId,
+      verifierId: 'AdminTrustOps-01',
+      reason: decisionReason.trim(),
+    });
+
+    if (res.success) {
       setClaims([...CLAIMS_REGISTRY]);
-      setActionSuccessMsg(`Claim #${claimId} was rejected.`);
+      setActionSuccessMsg(res.message);
       setSelectedClaim(null);
+      setActiveDecision(null);
+      setDecisionReason('');
+      setActionErrorMsg(null);
       setTimeout(() => setActionSuccessMsg(null), 5000);
+    } else {
+      setActionErrorMsg(res.message);
     }
   };
 
@@ -159,26 +183,19 @@ export const AdminClaimsPage: React.FC = () => {
                     Inspect Dossier
                   </Button>
 
-                  {claim.status !== 'CLAIMED' && (
-                    <>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => handleGrantClaim(claim.id)}
-                        leftIcon={<Check className="w-3.5 h-3.5" />}
-                      >
-                        Grant Claim & Merge
-                      </Button>
-
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={() => handleRejectClaim(claim.id)}
-                        leftIcon={<X className="w-3.5 h-3.5" />}
-                      >
-                        Reject
-                      </Button>
-                    </>
+                  {claim.status !== 'CLAIMED' && claim.status !== 'REJECTED' && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedClaim(claim);
+                        setDecisionReason('Statutory HPCSA council credentials verified against official register.');
+                        setActionErrorMsg(null);
+                      }}
+                      leftIcon={<Check className="w-3.5 h-3.5" />}
+                    >
+                      Audit & Decision
+                    </Button>
                   )}
                 </div>
               </div>
@@ -244,12 +261,37 @@ export const AdminClaimsPage: React.FC = () => {
                 </p>
               </div>
 
+              {actionErrorMsg && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-medium flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                  <span>{actionErrorMsg}</span>
+                </div>
+              )}
+
+              {selectedClaim.status !== 'CLAIMED' && selectedClaim.status !== 'REJECTED' && (
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                  <label className="block text-xs font-bold text-slate-800">
+                    Trust Ops Audit Reason (Mandatory)*:
+                  </label>
+                  <p className="text-[11px] text-slate-500">
+                    As mandated by the DigitalNexCare Constitution, an administrator may not approve or decline without recording a verifiable reason.
+                  </p>
+                  <textarea
+                    rows={2}
+                    value={decisionReason}
+                    onChange={(e) => setDecisionReason(e.target.value)}
+                    placeholder="e.g. Statutory HPCSA registry verified. Practice registration matched with BHF records."
+                    className="w-full text-xs p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#176BFF] focus:border-[#176BFF] bg-white"
+                  />
+                </div>
+              )}
+
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-                <Button variant="outline" onClick={() => setSelectedClaim(null)}>
+                <Button variant="outline" onClick={() => { setSelectedClaim(null); setActionErrorMsg(null); }}>
                   Close
                 </Button>
 
-                {selectedClaim.status !== 'CLAIMED' && (
+                {selectedClaim.status !== 'CLAIMED' && selectedClaim.status !== 'REJECTED' && (
                   <>
                     <Button
                       variant="danger"

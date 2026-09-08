@@ -31,7 +31,11 @@ import {
   Timer,
   FileText,
   Lock,
+  Receipt,
 } from 'lucide-react';
+import { PractitionerFinanceService } from '../../lib/finance/practitioner-finance-service';
+import { PaymentReceipt } from '../../types/finance';
+import { PaymentReceiptModal } from '../../components/finance/PaymentReceiptModal';
 
 export const BookingFlowPage: React.FC = () => {
   const { providerId } = useParams<{ providerId: string }>();
@@ -85,6 +89,8 @@ export const BookingFlowPage: React.FC = () => {
   const [confirmedAppointment, setConfirmedAppointment] = useState<DetailedAppointment | null>(null);
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [paymentReceipt, setPaymentReceipt] = useState<PaymentReceipt | null>(null);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
 
   // Generated Slots for selected date
   const [availableSlots, setAvailableSlots] = useState<AppointmentSlot[]>([]);
@@ -186,6 +192,35 @@ export const BookingFlowPage: React.FC = () => {
 
       if (res.success && res.appointment) {
         setConfirmedAppointment(res.appointment);
+
+        // Record commercial transaction & generate immutable receipt
+        if (paymentMethod === 'CARD_ONLINE') {
+          const grossCents = (selectedType.priceZAR || 700) * 100;
+          const finRes = PractitionerFinanceService.recordOnlineBookingPayment({
+            paymentReference: `PSTK_PAY_${Date.now()}`,
+            appointmentId: res.appointment.id,
+            practiceId: provider.id || 'prac-001',
+            bookingReference: res.appointment.bookingReference,
+            patientName: patientType === 'SELF' ? patientName : dependantName || patientName,
+            patientEmail,
+            practitionerName: provider.fullName,
+            practiceName: selectedType.locationName || 'Mediclinic Hatfield Practice',
+            practiceAddress: 'Burnett St, Hatfield, Pretoria, Gauteng',
+            appointmentDate: selectedSlot.date,
+            appointmentTime: `${selectedSlot.startTime} - ${selectedSlot.endTime}`,
+            appointmentType: selectedType.name,
+            grossAmountCents: grossCents,
+            paymentGateway: 'PAYSTACK',
+          });
+          setPaymentReceipt(finRes.receipt);
+        } else if (paymentMethod === 'CARD_AT_PRACTICE') {
+          PractitionerFinanceService.recordPayAtPracticeBooking({
+            practiceId: provider.id || 'prac-001',
+            appointmentId: res.appointment.id,
+            appointmentStatus: 'CONFIRMED',
+          });
+        }
+
         setStep(6);
       } else {
         setBookingError(res.message || 'Failed to complete booking.');
@@ -678,6 +713,19 @@ export const BookingFlowPage: React.FC = () => {
                 . A confirmation SMS & calendar invite have been sent to {confirmedAppointment.patientPhone}.
               </p>
 
+              {paymentReceipt && (
+                <div className="pt-2">
+                  <Button
+                    variant="outline"
+                    className="inline-flex items-center gap-2 border-emerald-300 text-emerald-800 hover:bg-emerald-50"
+                    onClick={() => setShowReceiptModal(true)}
+                  >
+                    <Receipt className="w-4 h-4 text-emerald-600" />
+                    <span>View Official Payment Receipt ({paymentReceipt.receiptNumber})</span>
+                  </Button>
+                </div>
+              )}
+
               <div className="pt-4 flex flex-col sm:flex-row justify-center gap-3">
                 <Link to="/patient/appointments">
                   <Button variant="primary">View in My Appointments</Button>
@@ -690,6 +738,13 @@ export const BookingFlowPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {showReceiptModal && paymentReceipt && (
+        <PaymentReceiptModal
+          receipt={paymentReceipt}
+          onClose={() => setShowReceiptModal(false)}
+        />
+      )}
     </div>
   );
 };

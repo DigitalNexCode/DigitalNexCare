@@ -13,7 +13,7 @@
  * 8. Track first-result performance metrics.
  */
 
-import { SouthAfricanProvince } from '../types';
+import { SouthAfricanProvince } from '../../types';
 import {
   LiveSearchEvent,
   LiveSearchStatus,
@@ -87,8 +87,13 @@ class LiveSearchStreamerService {
     const searchKey = this.generateSearchKey(params);
     const existingJob = this.activeJobs.get(searchKey);
 
-    // Request Coalescing: Attach to active in-flight search if already running
-    if (existingJob && !existingJob.isCancelled) {
+    // Request Coalescing: Attach to active in-flight search ONLY if currently running
+    const isInFlight =
+      existingJob &&
+      !existingJob.isCancelled &&
+      !['COMPLETED', 'NO_RESULTS', 'PARTIAL', 'ERROR'].includes(existingJob.record.status);
+
+    if (isInFlight && existingJob) {
       existingJob.listeners.add(onEvent);
 
       // Replay current state immediately
@@ -209,9 +214,22 @@ class LiveSearchStreamerService {
     // -------------------------------------------------------------
     // PHASE 1: SUPABASE & DIRECTORY DATABASE LOOKUP (Database-First)
     // -------------------------------------------------------------
+    // Detect if query includes both a practitioner name and a specialty
+    let detectedPractitionerName = params.query || '';
+    let effectiveSpecialty = params.specialty;
+
+    if (params.query && /dr\b/i.test(params.query)) {
+      if (!effectiveSpecialty) {
+        if (/dent/i.test(params.query)) effectiveSpecialty = 'Dentist';
+        else if (/psych/i.test(params.query)) effectiveSpecialty = 'Clinical Psychologist';
+        else if (/audio/i.test(params.query)) effectiveSpecialty = 'Audiologist';
+        else if (/physio/i.test(params.query)) effectiveSpecialty = 'Physiotherapist';
+      }
+    }
+
     const dbSearchResults = SubscriptionService.searchDirectory({
       query: params.query,
-      specialty: params.specialty,
+      specialty: effectiveSpecialty,
       province: params.province,
       city: params.city || (parsedArea.cityOrTown || undefined),
       suburb: params.suburb || (parsedArea.suburbOrTownship || undefined),
@@ -241,8 +259,8 @@ class LiveSearchStreamerService {
       status: 'DATABASE_RESULTS_READY',
       statusMessage:
         initialCombined.length > 0
-          ? `Found ${initialCombined.length} practitioners in National Directory.`
-          : `Scanning for practitioners in ${parsedArea.canonicalAreaName}...`,
+          ? `Found ${initialCombined.length} practitioner${initialCombined.length === 1 ? '' : 's'} in DigitalNexCare National Index.`
+          : `Checking external sources for ${parsedArea.canonicalAreaName}...`,
       practitioners: [...initialCombined],
       totalCount: initialCombined.length,
       timestamp: new Date().toISOString(),
@@ -251,14 +269,18 @@ class LiveSearchStreamerService {
     // Check Coverage via LocationService
     const coverageCheck = LocationService.hasSufficientCoverage(
       searchArea,
-      params.specialty || params.category
+      effectiveSpecialty || params.category
     );
 
-    // If we have sufficient fresh records (>= 4 records) and user did not explicitly force refresh:
-    // COMPLETE IMMEDIATELY WITHOUT EXTERNAL DISCOVERY (Test Case 2)
-    if (initialCombined.length >= 4 && coverageCheck.hasCoverage && !params.forceExternalRefresh) {
+    // If we searched for a specific practitioner name and found that practitioner in Supabase:
+    // COMPLETE IMMEDIATELY (Section 1: "If practitioner already exists in Supabase, return immediately")
+    const isSpecificNameSearch = params.query && /dr\b/i.test(params.query);
+    const foundSpecificPractitionerInDb = isSpecificNameSearch && initialCombined.length > 0;
+
+    // If we have sufficient fresh records or already found the specific practitioner in DB without force refresh:
+    if ((foundSpecificPractitionerInDb || (initialCombined.length >= 4 && coverageCheck.hasCoverage)) && !params.forceExternalRefresh) {
       job.record.status = 'COMPLETED';
-      job.record.statusMessage = `Displaying ${initialCombined.length} practitioners from DigitalNexCare Index.`;
+      job.record.statusMessage = `Displaying ${initialCombined.length} practitioner${initialCombined.length === 1 ? '' : 's'} from DigitalNexCare Index.`;
       job.record.completedAt = new Date().toISOString();
 
       this.emitEvent(job, {
@@ -293,7 +315,7 @@ class LiveSearchStreamerService {
     job.record.areaName = areaRecord.areaName;
 
     job.record.status = 'EXTERNAL_DISCOVERY_STARTED';
-    job.record.statusMessage = `Searching for ${params.specialty || 'practitioners'} in ${areaRecord.areaName}…`;
+    job.record.statusMessage = `Searching for ${effectiveSpecialty || params.query || 'practitioners'} in ${areaRecord.areaName}…`;
 
     this.emitEvent(job, {
       type: 'DISCOVERY_STARTED',
@@ -317,7 +339,7 @@ class LiveSearchStreamerService {
     try {
       // Execute discovery with GoogleMapsDiscoveryWorker
       const mapsPromise = this.googleWorker.searchByCategory(
-        params.specialty || params.category || 'General Practitioner',
+        effectiveSpecialty || params.category || 'General Practitioner',
         {
           province: areaRecord.province,
           city: areaRecord.cityTown || areaRecord.areaName,
@@ -328,7 +350,7 @@ class LiveSearchStreamerService {
 
       // Execute discovery with Regional Practices Provider
       const regionalPromise = this.regionalWorker.searchByCategory(
-        params.specialty || params.category || 'General Practitioner',
+        effectiveSpecialty || params.category || 'General Practitioner',
         {
           province: areaRecord.province,
           city: areaRecord.cityTown || areaRecord.areaName,
@@ -336,26 +358,31 @@ class LiveSearchStreamerService {
         }
       );
 
-      // If user typed a specific practitioner name: also query by name
-      let namePromise = Promise.resolve({ results: [] as any[] });
-      if (params.query && params.query.length >= 3 && !params.specialty) {
-        namePromise = this.googleWorker.searchByName(params.query, {
-          province: areaRecord.province,
-          city: areaRecord.cityTown || areaRecord.areaName,
-          suburb: areaRecord.suburb || areaRecord.areaName,
-        });
+      // If user typed a specific practitioner name: also query by name with extracted specialty
+      let namePromise: Promise<any> = Promise.resolve(null);
+      if (params.query && params.query.length >= 3) {
+        namePromise = this.googleWorker.searchByName(
+          params.query,
+          {
+            province: areaRecord.province,
+            city: areaRecord.cityTown || areaRecord.areaName,
+            suburb: areaRecord.suburb || areaRecord.areaName,
+          },
+          effectiveSpecialty
+        );
       }
 
       // Process results as they resolve
-      const workers = [mapsPromise, regionalPromise, namePromise];
+      const workers = [namePromise, mapsPromise, regionalPromise];
 
       for (const workerPromise of workers) {
         if (job.isCancelled) break;
 
         const result = await workerPromise;
-        if (!result || !result.results || result.results.length === 0) continue;
+        const rawItems = result?.results || result?.rawPractitioners || [];
+        if (!result || rawItems.length === 0) continue;
 
-        for (const rawItem of result.results) {
+        for (const rawItem of rawItems) {
           if (job.isCancelled) break;
 
           // 1. Normalization
@@ -364,30 +391,49 @@ class LiveSearchStreamerService {
           // 2. Compression & Snapshot Processing (Chunk 3A requirement)
           const compressionResult = processSourceCompression(rawItem);
 
-          // 3. Deduplication with existing directory
-          let isDuplicate = false;
+          // 3. Deduplication Check with existing directory (Section 9: Update vs Insert)
+          let matchedExisting: any = null;
           for (const existing of MOCK_PRACTITIONERS) {
             const conf = evaluateDeduplicationConfidence(normalized, existing);
             if (conf.confidence === 'EXACT_MATCH' || conf.confidence === 'HIGH_CONFIDENCE_MATCH') {
-              isDuplicate = true;
+              matchedExisting = existing;
               break;
             }
           }
 
-          if (isDuplicate || existingFingerprints.has(normalized.fingerprint.toLowerCase())) {
+          // If practitioner already exists: UPDATE the existing record. Do NOT insert another copy.
+          if (matchedExisting) {
+            matchedExisting.last_seen = new Date().toISOString();
+            if (normalized.rating && normalized.rating !== matchedExisting.rating) {
+              matchedExisting.rating = normalized.rating;
+            }
+            if (normalized.reviewCount && normalized.reviewCount > (matchedExisting.review_count || 0)) {
+              matchedExisting.review_count = normalized.reviewCount;
+            }
+            if (normalized.latitude && normalized.longitude) {
+              matchedExisting.latitude = normalized.latitude;
+              matchedExisting.longitude = normalized.longitude;
+            }
+            job.record.metrics.numberUpdated++;
+            continue;
+          }
+
+          if (existingFingerprints.has(normalized.fingerprint.toLowerCase())) {
             continue;
           }
 
           existingFingerprints.add(normalized.fingerprint.toLowerCase());
           externalDiscoveredCount++;
 
-          // 4. Save to In-Memory & Supabase practitioner directory
+          // 4. Save to In-Memory & Supabase practitioner directory (Section 9: INSERT)
           const internalEntity = {
             id: `ext-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             display_name: normalized.displayName,
+            full_name: normalized.displayName,
             title: normalized.title,
             practice_name: normalized.practiceName,
             specialty: normalized.specialty,
+            category: normalized.category,
             services: normalized.services,
             province: normalized.province,
             city: normalized.city,
@@ -409,7 +455,11 @@ class LiveSearchStreamerService {
             source_attribution: normalized.sourceAttribution,
             claim_status: 'UNCLAIMED',
             verification_status: 'UNVERIFIED',
+            fingerprint: normalized.fingerprint,
           };
+
+          // Register into in-memory directory so subsequent searches hit the database immediately
+          MOCK_PRACTITIONERS.push(internalEntity as any);
 
           // Try async write to Supabase
           this.persistPractitionerToSupabase(internalEntity, compressionResult).catch(() => {});
@@ -454,7 +504,20 @@ class LiveSearchStreamerService {
       }
     } catch (discoveryErr: any) {
       console.debug('Discovery worker partial exception:', discoveryErr);
-      // Fail gracefully per constitution
+      // Section 16: Failure handling - do not crash. Display any practitioners already stored.
+      job.record.status = job.streamedPractitioners.length > 0 ? 'PARTIAL' : 'FAILED';
+      job.record.statusMessage = 'Finding additional practitioners is temporarily unavailable.';
+      this.emitEvent(job, {
+        type: 'ERROR',
+        searchId: job.searchId,
+        status: job.record.status,
+        statusMessage: job.record.statusMessage,
+        practitioners: [...job.streamedPractitioners],
+        totalCount: job.streamedPractitioners.length,
+        timestamp: new Date().toISOString(),
+      });
+      this.cleanupJob(job);
+      return;
     }
 
     job.record.metrics.externalSearchTotalMs = Date.now() - discoveryStartTime;
@@ -483,7 +546,7 @@ class LiveSearchStreamerService {
     job.record.statusMessage =
       job.streamedPractitioners.length > 0
         ? `Found ${job.streamedPractitioners.length} practitioners in and around ${areaRecord.areaName}.`
-        : `No practitioners found yet in ${areaRecord.areaName}. Try expanding your radius.`;
+        : `We couldn't find practitioners for this search yet.`;
 
     this.emitEvent(job, {
       type: 'COMPLETED',
@@ -513,9 +576,7 @@ class LiveSearchStreamerService {
   }
 
   private cleanupJob(job: ActiveSearchJob) {
-    setTimeout(() => {
-      this.activeJobs.delete(job.key);
-    }, 15000); // Retain for 15s to allow other listeners to coalesce
+    this.activeJobs.delete(job.key);
   }
 
   private async persistPractitionerToSupabase(practitioner: any, compressionResult: any) {
