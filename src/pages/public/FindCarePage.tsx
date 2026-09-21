@@ -24,6 +24,9 @@ import { SearchFilterState } from '../../types';
 import { LiveSearchStreamer } from '../../lib/search/live-search-streaming';
 import { LiveSearchStreamerBanner } from '../../components/search/LiveSearchStreamerBanner';
 import { LiveSearchStatus } from '../../lib/location/types';
+import { LocationAutocompleteInput, SelectedLocationData } from '../../components/search/LocationAutocompleteInput';
+import { LocationService } from '../../lib/location/location-service';
+import { AreaNormalizer } from '../../lib/location/area-normalizer';
 import {
   Search,
   SlidersHorizontal,
@@ -103,8 +106,20 @@ export const FindCarePage: React.FC = () => {
     const prov = searchParams.get('province') || '';
     const spec = searchParams.get('specialty') || '';
     if (q) setSearchQuery(q);
-    if (loc) setSearchLocation(loc);
-    if (prov || spec) {
+    if (loc) {
+      setSearchLocation(loc);
+      const parsed = AreaNormalizer.parseArea(loc);
+      const area = LocationService.findOrCreateProvisionalArea(loc);
+      setFilters((f) => ({
+        ...f,
+        province: prov || area.province || f.province,
+        city: area.cityTown || parsed.cityOrTown || f.city,
+        suburb: area.suburb || parsed.suburbOrTownship || f.suburb,
+      }));
+      if (area.latitude && area.longitude && !userCoordinates) {
+        setUserCoordinates({ lat: area.latitude, lng: area.longitude });
+      }
+    } else if (prov || spec) {
       setFilters((f) => ({
         ...f,
         province: prov || f.province,
@@ -163,16 +178,26 @@ export const FindCarePage: React.FC = () => {
 
     try {
       const activeSpecialty = filters.specialty || searchQuery;
+      const targetArea = LocationService.findOrCreateProvisionalArea(
+        searchLocation || 'South Africa',
+        userCoordinates ? { latitude: userCoordinates.lat, longitude: userCoordinates.lng } : undefined
+      );
+
+      const effectiveCoords = userCoordinates
+        ? { lat: userCoordinates.lat, lng: userCoordinates.lng }
+        : targetArea.latitude && targetArea.longitude
+        ? { lat: targetArea.latitude, lng: targetArea.longitude }
+        : undefined;
 
       const result = await ExternalSearchWorker.executeDiscovery({
         query: searchQuery || undefined,
         practitionerName: searchQuery || undefined,
         specialty: activeSpecialty || undefined,
-        province: (filters.province && filters.province !== 'All Provinces') ? (filters.province as any) : undefined,
-        city: (filters.city && filters.city !== 'all cities') ? filters.city : (searchLocation || undefined),
-        suburb: filters.suburb || undefined,
-        latitude: userCoordinates?.lat,
-        longitude: userCoordinates?.lng,
+        province: (filters.province && filters.province !== 'All Provinces') ? (filters.province as any) : targetArea.province,
+        city: (filters.city && filters.city !== 'all cities') ? filters.city : (targetArea.cityTown || targetArea.areaName),
+        suburb: filters.suburb || targetArea.suburb || targetArea.areaName,
+        latitude: effectiveCoords?.lat,
+        longitude: effectiveCoords?.lng,
         radiusKm: selectedRadiusKm,
       });
 
@@ -218,23 +243,40 @@ export const FindCarePage: React.FC = () => {
       activeLiveCancelRef.current();
     }
 
+    const targetArea = LocationService.findOrCreateProvisionalArea(
+      searchLocation || 'South Africa',
+      userCoordinates ? { latitude: userCoordinates.lat, longitude: userCoordinates.lng } : undefined
+    );
+
+    const displayAreaName = targetArea.suburb && targetArea.cityTown && targetArea.suburb !== targetArea.cityTown
+      ? `${targetArea.suburb}, ${targetArea.cityTown}`
+      : targetArea.cityTown
+      ? `${targetArea.cityTown}, ${targetArea.province}`
+      : targetArea.areaName;
+
     setLiveStreamState({
       isStreaming: true,
       status: 'SEARCHING_DATABASE',
-      statusMessage: `Checking DigitalNexCare National Index for ${searchLocation || 'South Africa'}...`,
+      statusMessage: `Checking DigitalNexCare National Index for ${displayAreaName}...`,
       streamedCount: 0,
-      areaName: searchLocation || 'South Africa',
+      areaName: displayAreaName,
     });
+
+    const effectiveCoords = userCoordinates
+      ? { latitude: userCoordinates.lat, longitude: userCoordinates.lng }
+      : targetArea.latitude && targetArea.longitude
+      ? { latitude: targetArea.latitude, longitude: targetArea.longitude }
+      : null;
 
     const { cancel } = LiveSearchStreamer.startSearch(
       {
         query: searchQuery || undefined,
         specialty: filters.specialty || undefined,
         category: filters.specialty || undefined,
-        province: filters.province && filters.province !== 'All Provinces' ? filters.province : undefined,
-        city: filters.city && filters.city !== 'all cities' ? filters.city : (searchLocation || undefined),
-        suburb: filters.suburb || (searchLocation || undefined),
-        userCoordinates: userCoordinates ? { latitude: userCoordinates.lat, longitude: userCoordinates.lng } : null,
+        province: filters.province && filters.province !== 'All Provinces' ? filters.province : (targetArea.province || undefined),
+        city: filters.city && filters.city !== 'all cities' ? filters.city : (targetArea.cityTown || targetArea.areaName),
+        suburb: filters.suburb || targetArea.suburb || targetArea.areaName,
+        userCoordinates: effectiveCoords,
         radiusKm: selectedRadiusKm,
         unlockedIds,
         forceExternalRefresh: forceRefresh,
@@ -440,24 +482,29 @@ export const FindCarePage: React.FC = () => {
               />
             </div>
 
-            <div className="md:col-span-5 relative flex items-center">
-              <MapPin className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
+            <div className="md:col-span-5">
+              <LocationAutocompleteInput
+                id="findcare-location-input"
                 value={searchLocation}
-                onChange={(e) => setSearchLocation(e.target.value)}
-                placeholder="Suburb, City, Town, or Province..."
-                className="w-full pl-10 pr-28 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#176BFF]"
+                onChange={(val) => {
+                  setSearchLocation(val);
+                }}
+                onSelectLocation={(data) => {
+                  setSearchLocation(data.formattedText);
+                  setFilters((prev) => ({
+                    ...prev,
+                    province: data.province,
+                    city: data.cityTown || data.areaName,
+                    suburb: data.suburb || data.areaName,
+                  }));
+                  if (data.latitude && data.longitude) {
+                    setUserCoordinates({ lat: data.latitude, lng: data.longitude });
+                  }
+                }}
+                placeholder="Suburb, township, town or city..."
+                userCoordinates={userCoordinates}
+                onCoordinatesDetected={(coords) => setUserCoordinates(coords)}
               />
-              <button
-                type="button"
-                onClick={handleUseMyLocation}
-                className="absolute right-2 px-2.5 py-1 text-[11px] font-bold text-[#176BFF] hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1"
-                title="Use My Location"
-              >
-                <Navigation className={`w-3 h-3 ${isLocating ? 'animate-spin' : ''}`} />
-                <span>Near me</span>
-              </button>
             </div>
 
             <div className="md:col-span-2 flex items-center gap-2">

@@ -22,6 +22,7 @@ interface LocationAutocompleteInputProps {
   className?: string;
   inputClassName?: string;
   showLocationButton?: boolean;
+  hideLeftIcon?: boolean;
   userCoordinates?: { lat: number; lng: number } | null;
   onCoordinatesDetected?: (coords: { lat: number; lng: number }) => void;
 }
@@ -35,6 +36,7 @@ export const LocationAutocompleteInput: React.FC<LocationAutocompleteInputProps>
   className = '',
   inputClassName = '',
   showLocationButton = true,
+  hideLeftIcon = false,
   userCoordinates,
   onCoordinatesDetected,
 }) => {
@@ -182,7 +184,9 @@ export const LocationAutocompleteInput: React.FC<LocationAutocompleteInputProps>
   return (
     <div ref={containerRef} className={`relative ${className}`} id={`${id}-wrapper`}>
       <div className="relative flex items-center">
-        <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+        {!hideLeftIcon && (
+          <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+        )}
 
         <input
           ref={inputRef}
@@ -201,7 +205,7 @@ export const LocationAutocompleteInput: React.FC<LocationAutocompleteInputProps>
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           autoComplete="off"
-          className={`w-full pl-10 pr-20 py-2.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#176BFF]/20 focus:border-[#176BFF] transition-all shadow-xs ${inputClassName}`}
+          className={`w-full ${hideLeftIcon ? 'pl-2' : 'pl-10'} pr-20 py-2.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#176BFF]/20 focus:border-[#176BFF] transition-all shadow-xs ${inputClassName}`}
         />
 
         <div className="absolute right-2.5 flex items-center gap-1">

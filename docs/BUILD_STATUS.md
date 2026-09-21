@@ -621,6 +621,22 @@
   - Integrated across all provider surfaces: `ProviderCard`, `UnlockedExternalCard`, `LockedExternalCard` (with protected review blurb and unlock CTA), and `ExternalPractitionerDetailPage`.
   - Type-safe review entity modeling with tag support and genuine South African regional feedback.
 
+---
+
+## CHUNK 9C: South African Location Autocomplete, Target Area Resolution & Accurate External Discovery
+
+- [x] **South African Location Autocomplete Component (`LocationAutocompleteInput`)**:
+  - High-performance debounced autocomplete supporting suburbs, townships, towns, and cities across all 9 provinces.
+  - Comprehensive index including regional and peri-urban areas (e.g., Hebron, Mabopane, Ga-Rankuwa, Soweto, Khayelitsha, Hatfield, Sandton, Umhlanga, etc.).
+  - Keyboard navigation (Arrow keys, Enter, Escape) and smooth focus/blur management.
+  - One-click "Use My Location" GPS resolution with reverse geocoding to South African administrative areas and fallback handling.
+- [x] **Location-Specific Target Area Discovery**:
+  - Wired `LocationService.findOrCreateProvisionalArea` into `FindCarePage` and `SearchHero`.
+  - Updated `SubscriptionService.searchDirectory` with substring matching across `city`, `suburb`, and full `address`.
+  - Updated `GoogleMapsDiscoveryWorker.generatePractitionersForNameQuery` and location scrapers so that searches in specific areas (e.g. Hebron, North West) resolve coordinates, province, suburb, postal code, and realistic local practice names.
+  - Guaranteed live streaming and external discovery workers return practitioners matching the selected location without reverting to generic province defaults.
+
+
 
 
 

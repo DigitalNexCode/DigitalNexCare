@@ -9,6 +9,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { HEALTHCARE_SPECIALTIES, SA_MEDICAL_AIDS } from '../../lib/constants';
+import { LocationAutocompleteInput } from './LocationAutocompleteInput';
 
 interface SearchHeroProps {
   initialQuery?: string;
@@ -170,12 +171,18 @@ export const SearchHero: React.FC<SearchHeroProps> = ({
                   {isLocating ? 'Locating...' : 'USE MY LOCATION'}
                 </button>
               </div>
-              <input
-                type="text"
+              <LocationAutocompleteInput
+                id="hero-location-input"
                 value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="Suburb, City, or Province (e.g. Pretoria, Sandton)"
-                className="w-full text-sm font-semibold text-slate-900 placeholder:text-slate-400 bg-transparent focus:outline-none"
+                onChange={(val) => setLocation(val)}
+                onSelectLocation={(data) => {
+                  setLocation(data.formattedText);
+                }}
+                placeholder="Suburb, City, or Province (e.g. Hebron, Pretoria)"
+                className="w-full"
+                inputClassName="border-0 shadow-none px-0 py-0 text-sm font-semibold text-slate-900 placeholder:text-slate-400 bg-transparent focus:ring-0 focus:border-0"
+                hideLeftIcon={true}
+                showLocationButton={false}
               />
             </div>
 

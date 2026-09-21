@@ -334,10 +334,13 @@ export class GoogleMapsDiscoveryWorker extends BaseExternalPractitionerProvider 
     userCoords?: { latitude: number; longitude: number },
     explicitCategory?: string
   ): RawExternalPractitioner[] {
-    const cityName = city || areaName || 'Pretoria';
-    const localArea = suburb || areaName || 'Local Area';
-    const baseLat = userCoords?.latitude || this.getProvinceDefaultLat(province);
-    const baseLng = userCoords?.longitude || this.getProvinceDefaultLng(province);
+    const targetArea = suburb || areaName || city || 'Pretoria';
+    const areaRecord = LocationService.findOrCreateProvisionalArea(targetArea, userCoords);
+    const effectiveProvince = (province || areaRecord.province || 'Gauteng') as SouthAfricanProvince;
+    const cityName = city || areaRecord.cityTown || areaName || 'Pretoria';
+    const localArea = suburb || areaRecord.suburb || areaName || cityName;
+    const baseLat = userCoords?.latitude || areaRecord.latitude || this.getProvinceDefaultLat(effectiveProvince);
+    const baseLng = userCoords?.longitude || areaRecord.longitude || this.getProvinceDefaultLng(effectiveProvince);
 
     const lowerQuery = nameQuery.toLowerCase();
     let specialty = 'General Practitioner (GP)';
@@ -390,8 +393,8 @@ export class GoogleMapsDiscoveryWorker extends BaseExternalPractitionerProvider 
         rawAddress: `42 Medical Chambers, ${localArea}, ${cityName}`,
         rawCity: cityName,
         rawSuburb: localArea,
-        rawProvince: province,
-        rawPostalCode: '0083',
+        rawProvince: effectiveProvince,
+        rawPostalCode: '0193',
         rawLatitude: baseLat,
         rawLongitude: baseLng,
         rawRating: 4.85,
