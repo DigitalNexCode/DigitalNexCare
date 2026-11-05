@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { SUBSCRIPTION_PLANS } from '../../lib/constants';
 import { PatientSubscriptionTier, PaymentGatewayProvider } from '../../types';
 import { useAuth } from '../../lib/auth/context';
-import { PaymentService } from '../../lib/payments/payment-service';
+import { supabase } from '../../lib/supabase/client';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import {
@@ -32,9 +32,7 @@ export const SubscriptionCheckoutPage: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Simulated gateway modal state for local preview & sandbox testing
-  const [showSimulatedGatewayModal, setShowSimulatedGatewayModal] = useState(false);
   const [activeReference, setActiveReference] = useState<string | null>(null);
-  const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
 
   const plan = SUBSCRIPTION_PLANS[selectedPlan] || SUBSCRIPTION_PLANS.NEXCARE_PLUS;
 
@@ -42,70 +40,29 @@ export const SubscriptionCheckoutPage: React.FC = () => {
     setIsProcessing(true);
     setErrorMessage(null);
 
-    try {
-      // 1. Resolve Server-Side Price & Initialize Gateway Checkout
-      const checkoutRes = await PaymentService.createCheckoutSession({
-        planId: selectedPlan,
-        userId: user?.id || 'usr_current_patient',
-        userEmail: user?.email || 'patient@digitalnexcare.co.za',
-        userName: user?.fullName || 'Patient User',
-        gateway: paymentGateway,
-        callbackUrl: window.location.href,
-      });
-
-      if (!checkoutRes.success) {
-        throw new Error(checkoutRes.error || 'Failed to initialize payment session');
-      }
-
-      setActiveReference(checkoutRes.paymentReference);
-      setCheckoutUrl(checkoutRes.checkoutUrl);
-
-      if (plan.priceZAR === 0) {
-        // Free tier instant activation
-        setSubscriptionPlan('NEXCARE_FREE');
-        setIsProcessing(false);
-        setIsSuccess(true);
-        return;
-      }
-
-      // Show the official South African payment dialog simulation
-      setShowSimulatedGatewayModal(true);
+    if (!user) {
       setIsProcessing(false);
+      setErrorMessage('Please sign in before starting a subscription checkout.');
+      return;
+    }
+
+    try {
+      if (plan.priceZAR === 0) {
+        throw new Error('The free plan does not require checkout. Return to pricing to continue.');
+      }
+      if (paymentGateway !== 'PAYSTACK') throw new Error('Only Paystack checkout is connected to the live payment flow.');
+      const { data, error } = await supabase.functions.invoke('paystack-initialize', {
+        body: { planId: selectedPlan },
+      });
+      if (error || !data?.authorization_url) throw new Error(data?.error || error?.message || 'Failed to initialize Paystack checkout');
+      setActiveReference(data.reference);
+      window.location.assign(data.authorization_url);
     } catch (err: any) {
       setIsProcessing(false);
       setErrorMessage(err.message || 'Payment initialization encountered an unexpected error.');
     }
   };
 
-  const handleCompleteGatewayPayment = async (status: 'SUCCESS' | 'FAILED') => {
-    if (!activeReference) return;
-    setIsProcessing(true);
-    setShowSimulatedGatewayModal(false);
-
-    try {
-      if (status === 'FAILED') {
-        throw new Error('Payment was declined or cancelled by the card issuer.');
-      }
-
-      // Verify and atomically activate subscription
-      const activationRes = await PaymentService.verifyAndActivateSubscription(
-        activeReference,
-        paymentGateway
-      );
-
-      if (!activationRes.success) {
-        throw new Error(activationRes.error || 'Payment verification failed at gateway');
-      }
-
-      // Update auth context state
-      setSubscriptionPlan(selectedPlan);
-      setIsProcessing(false);
-      setIsSuccess(true);
-    } catch (err: any) {
-      setIsProcessing(false);
-      setErrorMessage(err.message || 'Payment confirmation failed');
-    }
-  };
 
   return (
     <div className="min-h-screen bg-slate-50 py-12">
@@ -224,19 +181,15 @@ export const SubscriptionCheckoutPage: React.FC = () => {
 
                 <button
                   type="button"
-                  onClick={() => setPaymentGateway('YOCO')}
-                  className={`p-4 rounded-2xl border text-left flex items-center justify-between transition-all ${
-                    paymentGateway === 'YOCO'
-                      ? 'border-[#176BFF] bg-blue-50/50 ring-2 ring-[#176BFF]/20'
-                      : 'border-slate-200 hover:border-slate-300'
-                  }`}
+                  disabled
+                  className="p-4 rounded-2xl border border-slate-200 bg-slate-50 text-left flex items-center justify-between opacity-60 cursor-not-allowed"
                 >
                   <div>
                     <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                      <span>Yoco Payments</span>
+                      <span>Yoco Payments (not connected)</span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold">ZAR</span>
                     </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">Debit / Credit Card</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">Paystack is currently the active gateway</div>
                   </div>
                   <CreditCard className="w-5 h-5 text-emerald-600" />
                 </button>
@@ -258,12 +211,12 @@ export const SubscriptionCheckoutPage: React.FC = () => {
               <div className="flex justify-between text-slate-600">
                 <span>Billing Cycle:</span>
                 <span className="font-semibold text-slate-900">
-                  {paymentGateway === 'PAYSTACK' ? 'Monthly Auto-Renewal' : 'Monthly Renewal Invoicing'}
+                  {paymentGateway === 'PAYSTACK' ? 'Monthly access (renewal payment)' : 'Monthly billing'}
                 </span>
               </div>
               <div className="flex justify-between text-slate-900 font-bold pt-2 border-t border-slate-200 text-sm">
                 <span>Total Due Today:</span>
-                <span className="text-base text-[#176BFF]">R{plan.priceZAR}.00 ZAR</span>
+                <span className="text-base text-[#176BFF]">R{plan.priceZAR.toFixed(2)} ZAR</span>
               </div>
             </div>
 
@@ -275,7 +228,7 @@ export const SubscriptionCheckoutPage: React.FC = () => {
               onClick={handleInitiateCheckout}
               leftIcon={<Lock className="w-4 h-4" />}
             >
-              Pay R{plan.priceZAR} via {paymentGateway}
+              Pay R{plan.priceZAR.toFixed(2)} via {paymentGateway}
             </Button>
 
             <div className="flex items-center justify-center gap-4 text-[11px] text-slate-400">
@@ -290,60 +243,6 @@ export const SubscriptionCheckoutPage: React.FC = () => {
           </div>
         )}
 
-        {/* Gateway Hosted Simulation Modal */}
-        {showSimulatedGatewayModal && (
-          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 border border-slate-200 shadow-xl animate-in fade-in duration-200">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-white text-xs ${paymentGateway === 'PAYSTACK' ? 'bg-[#176BFF]' : 'bg-emerald-600'}`}>
-                    {paymentGateway === 'PAYSTACK' ? 'PS' : 'YC'}
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">{paymentGateway} South Africa</h3>
-                    <p className="text-[11px] text-slate-500">Secure Payment Gateway</p>
-                  </div>
-                </div>
-                <Badge variant="neutral" size="sm">
-                  R{plan.priceZAR}.00 ZAR
-                </Badge>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-2">
-                <div className="flex justify-between text-slate-600">
-                  <span>Merchant:</span>
-                  <strong className="text-slate-900">DigitalNexCare (Pty) Ltd</strong>
-                </div>
-                <div className="flex justify-between text-slate-600">
-                  <span>Reference:</span>
-                  <span className="font-mono text-[11px] text-slate-700">{activeReference}</span>
-                </div>
-                <div className="flex justify-between text-slate-600">
-                  <span>Customer:</span>
-                  <span className="text-slate-900">{user?.email || 'patient@digitalnexcare.co.za'}</span>
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-2">
-                <Button
-                  variant="primary"
-                  className="w-full"
-                  onClick={() => handleCompleteGatewayPayment('SUCCESS')}
-                  leftIcon={<Check className="w-4 h-4" />}
-                >
-                  Authorize & Pay R{plan.priceZAR}.00
-                </Button>
-                <Button
-                  variant="outline"
-                  className="w-full text-slate-600 hover:text-rose-600 hover:border-rose-200"
-                  onClick={() => handleCompleteGatewayPayment('FAILED')}
-                >
-                  Simulate Bank Decline / Cancel
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

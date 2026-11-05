@@ -106,8 +106,6 @@ export const SA_CITIES_BY_PROVINCE: Record<SouthAfricanProvince, string[]> = {
     'Mahikeng',
     'Brits',
     'Hartbeespoort',
-    'Hebron',
-    'Ga-Rankuwa',
   ],
   'Northern Cape': [
     'Kimberley',
@@ -190,7 +188,7 @@ export const SUBSCRIPTION_PLANS: Record<PatientSubscriptionTier, SubscriptionPla
     id: 'NEXCARE_ACCESS',
     name: 'NexCare Access',
     tagline: 'Ideal for individuals managing routine appointments',
-    priceZAR: 50,
+    priceZAR: 64.99,
     monthlyReveals: 5,
     ctaText: 'Get Access',
     features: [
@@ -206,7 +204,7 @@ export const SUBSCRIPTION_PLANS: Record<PatientSubscriptionTier, SubscriptionPla
     id: 'NEXCARE_PLUS',
     name: 'NexCare Plus',
     tagline: 'Advanced discovery and broader reach across South Africa',
-    priceZAR: 100,
+    priceZAR: 129.99,
     monthlyReveals: 20,
     isPopular: true,
     ctaText: 'Go Plus',
@@ -223,7 +221,7 @@ export const SUBSCRIPTION_PLANS: Record<PatientSubscriptionTier, SubscriptionPla
     id: 'NEXCARE_FAMILY',
     name: 'NexCare Family',
     tagline: 'Full household coverage and comprehensive healthcare access',
-    priceZAR: 250,
+    priceZAR: 324.99,
     monthlyReveals: -1, // Unlimited reasonable-use
     ctaText: 'Choose Family',
     features: [

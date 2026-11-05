@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { PatientLayout } from '../../components/layout/PatientLayout';
 import { useAuth } from '../../lib/auth/context';
+import { supabase } from '../../lib/supabase/client';
 import { SUBSCRIPTION_PLANS } from '../../lib/constants';
 import { PricingTable } from '../../components/subscription/PricingTable';
 import { SubscriptionService, Chunk5TestResult } from '../../lib/subscription/subscription-service';
@@ -36,9 +37,17 @@ import {
 export const PatientSubscriptionPage: React.FC = () => {
   const { user, subscriptionPlan, revealsRemaining, setSubscriptionPlan } = useAuth();
   const currentPlan = SUBSCRIPTION_PLANS[subscriptionPlan];
+  const checkoutParams = new URLSearchParams(window.location.search);
+  const returnedFromCheckout = checkoutParams.get('payment') === 'pending';
+  const checkoutReference = checkoutParams.get('reference');
 
   const [activeSub, setActiveSub] = useState<PatientSubscriptionRecord | null>(null);
   const [paymentHistory, setPaymentHistory] = useState<PaymentRecord[]>([]);
+  const [checkoutConfirmation, setCheckoutConfirmation] = useState<'idle' | 'checking' | 'processing' | 'active' | 'failed'>('idle');
+  const confirmedReference = useRef<string | null>(null);
+  const checkoutIsActive = checkoutConfirmation === 'active' || Boolean(
+    activeSub?.status === 'ACTIVE' && checkoutReference && activeSub.lastPaymentReference === checkoutReference
+  );
 
   // Test runners
   const [chunk5Results, setChunk5Results] = useState<Chunk5TestResult[] | null>(null);
@@ -57,13 +66,79 @@ export const PatientSubscriptionPage: React.FC = () => {
   const [prorationDetails, setProrationDetails] = useState<any>(null);
 
   useEffect(() => {
-    const userId = user?.id || 'usr_pat_001';
-    const sub = PaymentService.getSubscription(userId);
-    setActiveSub(sub);
-
-    const history = PaymentService.getUserPaymentHistory(userId);
-    setPaymentHistory(history);
+    if (!user?.id) {
+      setActiveSub(null);
+      setPaymentHistory([]);
+      return;
+    }
+    const loadBilling = async () => {
+      const [{ data: sub }, { data: payments }] = await Promise.all([
+        supabase.from('patient_subscriptions').select('*').eq('patient_id', user.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+        supabase.from('payments').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
+      ]);
+      setActiveSub(sub ? {
+        id: sub.id, userId: sub.patient_id, userEmail: user.email, planId: sub.plan_id,
+        status: sub.status, currentPeriodStart: sub.current_period_start, currentPeriodEnd: sub.current_period_end,
+        cancelAtPeriodEnd: Boolean(sub.cancel_at_period_end), paymentGateway: 'PAYSTACK',
+        lastPaymentReference: sub.payment_gateway_ref,
+        revealAllowance: 0, revealsUsed: 0,
+        createdAt: sub.created_at, updatedAt: sub.updated_at,
+      } as PatientSubscriptionRecord : null);
+      const paidEntitlementIsCurrent = Boolean(
+        sub && String(sub.status).toUpperCase() === 'ACTIVE' &&
+        sub.current_period_end && new Date(sub.current_period_end).getTime() > Date.now()
+      );
+      setSubscriptionPlan(paidEntitlementIsCurrent ? sub!.plan_id as PatientSubscriptionTier : 'NEXCARE_FREE');
+      setPaymentHistory((payments || []).map((payment: any) => ({
+        id: payment.id, userId: payment.user_id, userEmail: user.email, planId: payment.raw_response?.plan_id || subscriptionPlan,
+        amountZAR: Number(payment.amount_cents || 0) / 100, amountCents: Number(payment.amount_cents || 0), currency: 'ZAR', gateway: payment.gateway,
+        gatewayReference: payment.gateway_transaction_id || payment.payment_reference, internalReference: payment.payment_reference,
+        status: payment.status === 'COMPLETED' ? 'SUCCESS' : payment.status === 'REFUNDED' ? 'REFUNDED' : payment.status === 'FAILED' ? 'FAILED' : 'PENDING',
+        paidAt: payment.updated_at, refunded: payment.status === 'REFUNDED', createdAt: payment.created_at,
+      })) as PaymentRecord[]);
+    };
+    void loadBilling();
+    const channel = supabase.channel(`patient-billing-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'patient_subscriptions', filter: `patient_id=eq.${user.id}` }, () => { void loadBilling(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `user_id=eq.${user.id}` }, () => { void loadBilling(); })
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
   }, [user, subscriptionPlan]);
+
+  useEffect(() => {
+    if (!user?.id || !returnedFromCheckout || !checkoutReference || confirmedReference.current === checkoutReference) return;
+    confirmedReference.current = checkoutReference;
+    let cancelled = false;
+
+    const confirmPayment = async () => {
+      setCheckoutConfirmation('checking');
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const { data, error } = await supabase.functions.invoke('paystack-confirm-patient-subscription', {
+          body: { reference: checkoutReference },
+        });
+        if (cancelled) return;
+        if (error) {
+          setCheckoutConfirmation('failed');
+          return;
+        }
+        if (data?.status === 'active' && data?.plan_id) {
+          setSubscriptionPlan(data.plan_id as PatientSubscriptionTier);
+          setCheckoutConfirmation('active');
+          return;
+        }
+        if (data?.status === 'failed') {
+          setCheckoutConfirmation('failed');
+          return;
+        }
+        setCheckoutConfirmation('processing');
+        if (attempt < 9) await new Promise((resolve) => window.setTimeout(resolve, 2500));
+      }
+      if (!cancelled) setCheckoutConfirmation('processing');
+    };
+
+    void confirmPayment();
+    return () => { cancelled = true; };
+  }, [user?.id, returnedFromCheckout, checkoutReference, setSubscriptionPlan]);
 
   const handleRunChunk5Tests = () => {
     setIsRunningChunk5(true);
@@ -84,25 +159,27 @@ export const PatientSubscriptionPage: React.FC = () => {
     }
   };
 
-  const handleConfirmCancellation = () => {
-    const userId = user?.id || 'usr_pat_001';
-    const res = PaymentService.cancelSubscription(userId, false);
-    if (res.success && res.subscription) {
-      setActiveSub({ ...res.subscription });
-      setCancelFeedback(res.message);
-      setShowCancelModal(false);
+  const handleConfirmCancellation = async () => {
+    if (!user?.id || !activeSub?.id) return;
+    const { error } = await supabase.from('patient_subscriptions').update({ cancel_at_period_end: true, updated_at: new Date().toISOString() }).eq('id', activeSub.id).eq('patient_id', user.id);
+    if (error) {
+      setCancelFeedback(`Unable to update subscription: ${error.message}`);
+      return;
     }
+    setActiveSub((current) => current ? { ...current, cancelAtPeriodEnd: true } : current);
+    setCancelFeedback('Your subscription will remain active until the current period ends and will not renew.');
+    setShowCancelModal(false);
   };
 
-  const handleOpenUpgrade = async (targetTier: PatientSubscriptionTier) => {
+  const handleOpenUpgrade = (targetTier: PatientSubscriptionTier) => {
     setUpgradeTier(targetTier);
-    const proration = await PaymentService.calculateUpgradeProration(
-      subscriptionPlan,
-      targetTier,
-      20
-    );
-    setProrationDetails(proration);
     setShowUpgradeModal(true);
+    setProrationDetails({
+      currentPriceZAR: SUBSCRIPTION_PLANS[subscriptionPlan].priceZAR,
+      newPriceZAR: SUBSCRIPTION_PLANS[targetTier].priceZAR,
+      proratedAmountZAR: SUBSCRIPTION_PLANS[targetTier].priceZAR,
+      immediateRevealIncrease: 0,
+    });
   };
 
   return (
@@ -110,6 +187,15 @@ export const PatientSubscriptionPage: React.FC = () => {
       title="Subscription & Payments"
       subtitle="Manage your patient subscription plan, South African payment methods, and external reveal entitlements."
     >
+      {returnedFromCheckout && <div role="status" aria-live="polite" className={`rounded-2xl border p-4 text-sm ${checkoutIsActive ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : checkoutConfirmation === 'failed' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-blue-50 border-blue-200 text-blue-900'}`}>
+        {checkoutIsActive
+          ? 'Payment confirmed. Your subscription is active.'
+          : checkoutConfirmation === 'checking'
+            ? 'Checking your Paystack payment and activating your subscription…'
+            : checkoutConfirmation === 'failed'
+              ? 'We could not confirm this payment yet. Your subscription has not been activated. If Paystack shows the payment as successful, refresh this page or contact support.'
+              : 'Your payment is being confirmed. This page will keep checking and activate your subscription as soon as Paystack confirms it.'}
+      </div>}
       {/* Current Active Plan Card */}
       <div className="bg-[#07111F] text-white rounded-3xl p-6 sm:p-8 border border-slate-800 shadow-sm space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -292,7 +378,7 @@ export const PatientSubscriptionPage: React.FC = () => {
               Paystack & Yoco Gateway Test Suite (23 Test Cases)
             </h3>
             <p className="text-xs text-slate-500">
-              Covers R50, R100, R250 checkout creation, HMAC signatures (SHA512/SHA256), idempotency, failed payments, Yoco renewal checkouts, refunds, and server-side price protection.
+                Covers R64.99, R129.99, R324.99 checkout creation, HMAC signatures (SHA512/SHA256), idempotency, failed payments, Yoco renewal checkouts, refunds, and server-side price protection.
             </p>
           </div>
 
@@ -488,7 +574,7 @@ export const PatientSubscriptionPage: React.FC = () => {
               <Button variant="outline" size="sm" onClick={() => setShowUpgradeModal(false)}>
                 Cancel
               </Button>
-              <Link to={`/checkout?plan=${upgradeTier}`}>
+              <Link to={`/subscription/checkout?plan=${upgradeTier}`}>
                 <Button variant="primary" size="sm">
                   Proceed to Checkout
                 </Button>
