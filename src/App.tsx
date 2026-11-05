@@ -118,6 +118,7 @@ export default function App() {
               />
               <Route path="/book/:providerId" element={<BookingFlowPage />} />
               <Route path="/subscribe/:planId" element={<SubscriptionCheckoutPage />} />
+              <Route path="/subscription/checkout" element={<SubscriptionCheckoutPage />} />
 
               {/* Legal & Compliance Routes */}
               <Route path="/legal/terms" element={<TermsPage />} />
